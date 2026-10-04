@@ -121,6 +121,10 @@ local lastNotifiedMurderer = nil
 local lastNotifiedSheriff = nil
 local lastNotifiedHero = nil
 
+-- Round-transition tracking
+local noMurdererSince = nil
+local ROUND_END_DEBOUNCE = 2.0
+
 --==================================================
 -- NOTIFICATION UTILITY
 --==================================================
@@ -685,13 +689,13 @@ local flyDownCorner = Instance.new("UICorner")
 flyDownCorner.CornerRadius = UDim.new(0, 7)
 flyDownCorner.Parent = flyDown
 
--- FIX: previously flySpeed and flyMaxSpeed were separate, so the slider did nothing.
+-- FIX: flySpeed and flyMaxSpeed were separate, so the slider did nothing.
 local function updateFlySpeed(value)
 	value = tonumber(value)
 	if not value then value = flySpeed end
 	value = math.clamp(math.floor(value), 1, 500)
 	flySpeed = value
-	flyMaxSpeed = value -- <- THE FIX: slider now actually drives flight cap
+	flyMaxSpeed = value
 	flySpeedLabel.Text = "Speed: " .. tostring(flySpeed)
 	flySpeedBox.Text = tostring(flySpeed)
 end
@@ -706,7 +710,6 @@ local function stopFly()
 	if flyBodyGyro then flyBodyGyro:Destroy() flyBodyGyro = nil end
 	flyCurrentSpeed = 0
 
-	-- FIX: clear stale references so respawn doesn't try to reuse them
 	flyCharacter = nil
 	flyHumanoid = nil
 	flyRoot = nil
@@ -916,8 +919,6 @@ flingThirdPartyButton.MouseButton1Click:Connect(function()
 	if flingThirdParty then
 		flingThirdPartyButton.BackgroundColor3 = Color3.fromRGB(70, 45, 35)
 		flingThirdPartyIndicator.BackgroundColor3 = Color3.fromRGB(230, 100, 55)
-		-- SECURITY NOTE: this loads remote code. Only uncomment if you
-		-- trust the URL. It's left as-is to preserve original functionality.
 		local success = pcall(function()
 			loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Ultimate-Fling-GUI-41909"))()
 		end)
@@ -926,9 +927,6 @@ flingThirdPartyButton.MouseButton1Click:Connect(function()
 		end
 	else
 		setToggleOff(flingThirdPartyButton, flingThirdPartyIndicator)
-		-- NOTE: there is no handle to unload the external script. Turning
-		-- this off stops re-loading it, but any GUI it created will remain
-		-- until you rejoin. This is a limitation of the external script.
 	end
 end)
 
@@ -1160,9 +1158,6 @@ end)
 -- SPAWN & LOBBY PROTECTION
 --==================================================
 
--- FIX: previously this did workspace:GetDescendants() on every call,
--- which was called dozens of times per second inside Kill All. Now we
--- cache the spawn locations and refresh every 10s on a background loop.
 local cachedSpawns = {}
 local lastSpawnCacheUpdate = 0
 
@@ -1233,7 +1228,6 @@ local function attackTarget(target)
 		local knife = getKnife()
 		if knife then
 			myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1.5)
-			-- FIX: wait for position to replicate before activating knife.
 			task.wait(0.05)
 			pcall(function() knife:Activate() end)
 		end
@@ -1246,7 +1240,6 @@ local function killAllPlayers()
 			local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
 			if humanoid and humanoid.Health > 0 and not isPlayerInSpawn(target) then
 				attackTarget(target)
-				-- FIX: 0.12 was too fast for server rate-limit. Bumped to 0.2.
 				task.wait(0.2)
 			end
 		end
@@ -1328,7 +1321,6 @@ local function shootMurderer()
 		local gun = getGun()
 		if gun then
 			myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 5)
-			-- FIX: wait for position to replicate before firing
 			task.wait(0.08)
 
 			local shootRemote = gun:FindFirstChild("Shoot") or ReplicatedStorage:FindFirstChild("Shoot", true)
@@ -1374,7 +1366,6 @@ local function teleportToGun()
 		end
 
 		if targetPart then
-			-- FIX: skip if already near the gun (was spamming teleport every 0.25s)
 			if (myRoot.Position - targetPart.Position).Magnitude < 8 then
 				return true
 			end
@@ -1448,7 +1439,7 @@ local dropdownOpen = false
 
 local playerList = Instance.new("ScrollingFrame")
 playerList.Name = "PlayerList"
-playerList.Size = UDim2.new(1, 0, 0, 0) -- starts at 0 height so it doesn't take space when hidden
+playerList.Size = UDim2.new(1, 0, 0, 0)
 playerList.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
 playerList.BorderSizePixel = 0
 playerList.Visible = false
@@ -1700,7 +1691,7 @@ turnOffAllButton.MouseButton1Click:Connect(function()
 end)
 
 --==================================================
--- ESP SYSTEM (no flicker)
+-- ESP SYSTEM (no flicker) + ROUND-AWARE ROLE STATE
 --==================================================
 
 local highlights = {}
@@ -1723,6 +1714,38 @@ local function IsAlive(target)
 	if not target or not target.Character then return false end
 	local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
 	return humanoid and humanoid.Health > 0
+end
+
+-- FIX: clear every cached role + notification/chat sentinels. Used both
+-- by the round-end detectors and (optionally) on hard resets.
+local function resetRoleState()
+	MurdererName = nil
+	SheriffName = nil
+	HeroName = nil
+	lastNotifiedMurderer = nil
+	lastNotifiedSheriff = nil
+	lastNotifiedHero = nil
+	lastChatSentMurderer = nil
+	roundActive = false
+	noMurdererSince = nil
+end
+
+-- FIX: validate a reported role before caching it. If the holder is dead
+-- or no longer in the server, treat them as not holding the role. This is
+-- what makes Hero/Sheriff transfer work: when the old Hero dies, the role
+-- clears immediately, and the next player who picks up the gun becomes
+-- the new Hero on the next poll.
+local function resolveRole(reportedName)
+	if not reportedName then return nil end
+	local targetPlayer = Players:FindFirstChild(reportedName)
+	if not targetPlayer then return nil end
+	local humanoid = targetPlayer.Character and targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid and humanoid.Health <= 0 then
+		-- Reported as this role but currently dead -> reject
+		return nil
+	end
+	-- Alive, or character not yet loaded (spawn window) -> accept
+	return reportedName
 end
 
 local function GetRoles()
@@ -1770,10 +1793,41 @@ local function GetRoles()
 		elseif role == "Hero" then newHero = target.Name end
 	end
 
+	-- Reject dead/left reported roles
+	newMurderer = resolveRole(newMurderer)
+	newSheriff = resolveRole(newSheriff)
+	newHero = resolveRole(newHero)
+
+	-- === ROUND TRANSITION DETECTION ===
+
+	-- Detector A: murderer name changed -> new round.
+	-- Wipe the round-specific sub-roles so a stale sheriff/hero from the
+	-- previous round doesn't bleed into the new one.
+	if newMurderer and MurdererName and newMurderer ~= MurdererName then
+		SheriffName = nil
+		HeroName = nil
+		lastNotifiedSheriff = nil
+		lastNotifiedHero = nil
+		lastChatSentMurderer = nil
+		roundActive = false
+		noMurdererSince = nil
+	end
+
+	-- Detector B: debounce - murderer missing for too long -> round ended.
+	if newMurderer then
+		noMurdererSince = nil
+	elseif MurdererName then
+		if not noMurdererSince then
+			noMurdererSince = tick()
+		elseif tick() - noMurdererSince >= ROUND_END_DEBOUNCE then
+			resetRoleState()
+		end
+	end
+
+	-- === APPLY NAMES ===
+
 	if newMurderer then
 		MurdererName = newMurderer
-	elseif MurdererName and not Players:FindFirstChild(MurdererName) then
-		MurdererName = nil
 	end
 
 	if newSheriff then
@@ -1787,6 +1841,8 @@ local function GetRoles()
 	elseif HeroName and not Players:FindFirstChild(HeroName) then
 		HeroName = nil
 	end
+
+	-- === NOTIFICATIONS ===
 
 	if autoNotifyRoles then
 		if (MurdererName and MurdererName ~= lastNotifiedMurderer)
@@ -1869,7 +1925,56 @@ Players.PlayerAdded:Connect(function(target)
 	end)
 end)
 
-Players.PlayerRemoving:Connect(function(target) RemoveHighlight(target) end)
+Players.PlayerRemoving:Connect(function(target)
+	RemoveHighlight(target)
+	-- Also clear any cached role that belonged to this player
+	if MurdererName == target.Name then MurdererName = nil end
+	if SheriffName == target.Name then SheriffName = nil end
+	if HeroName == target.Name then HeroName = nil end
+end)
+
+--==================================================
+-- OPTIONAL WORKSPACE ROUND SIGNAL (best-effort)
+--==================================================
+-- Some MM2 builds expose a RoundActive-style BoolValue under a container
+-- like workspace.Game / workspace.Round / workspace.GameState. If we find
+-- one, use it as a hard round-end trigger to complement the debounce.
+
+local function tryHookRoundSignal()
+	local containerNames = { "Game", "Round", "GameState", "GameInfo", "RoundState" }
+	local flagNames = { "RoundActive", "InRound", "Round", "IsRound" }
+
+	for _, cName in ipairs(containerNames) do
+		local container = workspace:FindFirstChild(cName)
+		if container then
+			for _, fName in ipairs(flagNames) do
+				local flag = container:FindFirstChild(fName)
+				if flag and (flag:IsA("BoolValue") or flag:IsA("IntValue")) then
+					flag.Changed:Connect(function(value)
+						local active = (value == true) or (value == 1)
+						if not active then
+							resetRoleState()
+						end
+					end)
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+task.spawn(function()
+	-- Try immediately, then re-check if it appears later
+	if not tryHookRoundSignal() then
+		local tries = 0
+		while gui.Parent and tries < 60 do
+			task.wait(2)
+			tries = tries + 1
+			if tryHookRoundSignal() then break end
+		end
+	end
+end)
 
 --==================================================
 -- AUTO CHAT MURDERER SENDER
@@ -2120,7 +2225,6 @@ local function showMenu()
 	reopenButton.Visible = false
 end
 
--- NEW: "Minimize" now hides the menu and shows the small circle.
 local function minimizeMenu()
 	menuVisible = false
 	frame.Visible = false
@@ -2129,13 +2233,9 @@ local function minimizeMenu()
 	reopenButton.Visible = true
 end
 
--- NEW: "Close" now fully tears down the script.
 local function closeScript()
-	-- Silent cleanup of all active state (no notification, no toggling UI)
 	pcall(function() resetAllToggles(true) end)
-	-- Send a closing notification *before* destroying the GUI
 	sendNotification("MM2 Menu", "Script closed.")
-	-- Destroying the ScreenGui also terminates the main `while gui.Parent` loops.
 	pcall(function() gui:Destroy() end)
 end
 
@@ -2150,13 +2250,11 @@ lockButton.MouseButton1Click:Connect(function()
 	end
 end)
 
--- CHANGED: minus now minimizes to the small circle (was toggling a compact mode)
 minimizeButton.MouseButton1Click:Connect(function()
 	minimizeMenu()
 	sendNotification("MM2 Menu", "Menu minimized. Click 'MM2' or press Right Shift to reopen.")
 end)
 
--- CHANGED: X now closes the entire script (was minimizing to the circle)
 closeButton.MouseButton1Click:Connect(function()
 	closeScript()
 end)
