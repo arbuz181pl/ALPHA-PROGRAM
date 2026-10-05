@@ -1962,18 +1962,6 @@ local function applyPvpPreset()
     if not S.notifyRoundEnd then S.notifyRoundEnd = true setOn(U.rEndBtn, U.rEndInd) end
     if not S.playerJoinLeaveNotify then S.playerJoinLeaveNotify = true setOn(U.plBtn, U.plInd) end
     if not S.killSoundOn then S.killSoundOn = true setOn(U.killSoundBtn, U.killSoundInd) end
-    if not S.autoSendMurdererChat then
-        S.autoSendMurdererChat = true
-        setOn(U.autoChatBtn, U.autoChatInd)
-        S.lastChatSentMurderer = nil
-        S.roundActive = false
-    end
-    if not S.autoSendSheriffChat then
-        S.autoSendSheriffChat = true
-        setOn(U.autoSheriffChatBtn, U.autoSheriffChatInd)
-        S.lastChatSentSheriff = nil
-        S.roundActiveSheriff = false
-    end
     sendNotification("MM2 Menu", "PVP Ready preset applied")
 end
 
@@ -1983,9 +1971,9 @@ U.pvpPresetBtn.MouseButton1Click:Connect(applyPvpPreset)
 
 createSectionTitle("PRESET INFO")
 local pInfo = Instance.new("TextLabel")
-pInfo.Size = UDim2.new(1, 0, 0, 180)
+pInfo.Size = UDim2.new(1, 0, 0, 170)
 pInfo.BackgroundTransparency = 1
-pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Rainbow Crosshair\n- Gun Drop Alert\n- Round Start / End Notify\n- Player Join/Leave Alerts\n- Kill Sound\n- Auto Send Murderer In Chat\n- Auto Send Sheriff In Chat"
+pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Rainbow Crosshair\n- Gun Drop Alert\n- Round Start / End Notify\n- Player Join/Leave Alerts\n- Kill Sound"
 pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
 pInfo.TextSize = 11
 pInfo.Font = Enum.Font.Gotham
