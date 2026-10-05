@@ -1,4 +1,4 @@
---// MM2 MENU BY ARBUZ v1.3 (ALPHA)
+--// MM2 MENU BY ARBUZ v1.4 (ALPHA)
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7,6 +7,7 @@ local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
 
 local RAINBOW_SPEED = 0.25
 
@@ -66,17 +67,15 @@ local S = {
     lastBagFullNotified = 0,
     safeSpot = nil,
     BAG_FULL_THRESHOLD = 40,
-    recentCoins = {},
-    fleeUntil = 0,
-    FLEE_TRIGGER_DIST = 8,
-    FLEE_KEEP_DIST = 25,
     currentFarmCoin = nil,
-    currentFarmTAt = 0,
     lastFarmTP = 0,
-    lastFleeTP = 0,
     FARM_TP_INTERVAL = 0.6,
-    FLEE_TP_INTERVAL = 1.2,
-    FARM_FLIGHT_SPEED = 55,
+    FLEE_DURATION = 2.5,
+    FLEE_TRIGGER_DIST = 15,
+    FLEE_KEEP_DIST = 30,
+    fleeUntil = 0,
+    farmAnchor = nil,
+    fleeAnchor = nil,
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
         infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
@@ -120,10 +119,6 @@ local GUN_SCAN_INTERVAL = 0.5
 local lastAutoGunTP = 0
 local currentLayoutOrder = 0
 local currentParent = nil
-
-local gunTpAnchor = nil
-local farmAnchor = nil
-local speedBV = nil
 
 local function playSound(id, vol)
     local snd = Instance.new("Sound")
@@ -192,7 +187,7 @@ U.title = Instance.new("TextLabel")
 U.title.Size = UDim2.new(1, -120, 1, 0)
 U.title.Position = UDim2.fromOffset(10, 0)
 U.title.BackgroundTransparency = 1
-U.title.Text = "MM2 MENU BY ARBUZ v1.3"
+U.title.Text = "MM2 MENU BY ARBUZ v1.4"
 U.title.TextColor3 = Color3.fromRGB(255, 255, 255)
 U.title.TextSize = 13
 U.title.Font = Enum.Font.GothamBold
@@ -556,7 +551,8 @@ U.autoFarmBtn.MouseButton1Click:Connect(function()
         S.recentCoins = {}
         S.currentFarmCoin = nil
         if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
-        if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
+        if S.farmAnchor then S.farmAnchor:Destroy() S.farmAnchor = nil end
+        if S.fleeAnchor then S.fleeAnchor:Destroy() S.fleeAnchor = nil end
         sendNotification("MM2 Menu", "Auto Farm OFF")
     end
 end)
@@ -625,9 +621,9 @@ end)
 
 createSectionTitle("AUTO FARM INFO")
 local afInfo = Instance.new("TextLabel")
-afInfo.Size = UDim2.new(1, 0, 0, 140)
+afInfo.Size = UDim2.new(1, 0, 0, 160)
 afInfo.BackgroundTransparency = 1
-afInfo.Text = "Auto Farm glides you under the map at safe altitude,\nsmoothly flying from coin to coin — no teleports, no kicks.\nWhen your bag hits 40 coins it does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab gun & shoot, else hide\n\nIf murderer gets within 8 studs, instantly hides under\nmap until they leave."
+afInfo.Text = "Auto Farm glides you under the map at safe altitude,\nsmoothly flying from coin to coin — no teleports, no kicks.\nWhen your bag hits 40 coins it does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab gun & shoot, else hide\n\nIf murderer gets within 15 studs, you fly UP for 2.5s,\nthen return to farming. Avatar lies down while flying."
 afInfo.TextColor3 = Color3.fromRGB(150, 153, 165)
 afInfo.TextSize = 11
 afInfo.Font = Enum.Font.Gotham
@@ -681,6 +677,7 @@ U.selfRainbowBtn.MouseButton1Click:Connect(function()
     if S.rainbowSelfESP then
         U.selfRainbowBtn.BackgroundColor3 = Color3.fromRGB(60, 45, 70)
         U.selfRainbowInd.BackgroundColor3 = Color3.fromRGB(210, 110, 255)
+        -- Add same rainbow gradient as the title
         if not U.selfRainbowBtn:FindFirstChild("RainbowGradient") then
             local g = Instance.new("UIGradient")
             g.Name = "RainbowGradient"
@@ -1601,7 +1598,6 @@ local function attackTarget(t)
     end
 end
 
--- ⬇⬇⬇ SWAPPED killAllPlayers (from MM2MENU.lua) ⬇⬇⬇
 local function killAllPlayers()
     local c = player.Character
     if not c then return end
@@ -1646,7 +1642,6 @@ local function killAllPlayers()
         end
     end
 end
--- ⬆⬆⬆ END SWAPPED killAllPlayers ⬆⬆⬆
 
 U.killAllBtn = createActionButton("KillAllNow", "Kill All Now")
 U.killAllBtn.MouseButton1Click:Connect(killAllPlayers)
@@ -2213,7 +2208,8 @@ local function resetAllToggles(silent)
         S.lastFarmTP = 0
         S.lastFleeTP = 0
         if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
-        if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
+        if S.farmAnchor then S.farmAnchor:Destroy() S.farmAnchor = nil end
+        if S.fleeAnchor then S.fleeAnchor:Destroy() S.fleeAnchor = nil end
     end
     if S.notifyRoundStart then S.notifyRoundStart = false setOff(U.rStartBtn, U.rStartInd) end
     if S.notifyRoundEnd then S.notifyRoundEnd = false setOff(U.rEndBtn, U.rEndInd) end
@@ -2354,7 +2350,8 @@ local function tryGrabDroppedGun()
 end
 
 local function runPostBagAction()
-    if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
+    if S.farmAnchor then S.farmAnchor:Destroy() S.farmAnchor = nil end
+    if S.fleeAnchor then S.fleeAnchor:Destroy() S.fleeAnchor = nil end
 
     if not isBagFull() then
         S.postBagActionDone = false
@@ -2406,20 +2403,78 @@ local function runPostBagAction()
     end
 end
 
+-- ============================================================
+-- FARM ANCHOR (AlignPosition — smooth, modern)
+-- ============================================================
 local function getOrCreateFarmAnchor(hrp)
-    if farmAnchor and farmAnchor.Parent == hrp then
-        return farmAnchor
+    if S.farmAnchor and S.farmAnchor.Parent == hrp then
+        return S.farmAnchor
     end
-    if farmAnchor then farmAnchor:Destroy() end
-    farmAnchor = Instance.new("BodyPosition")
-    farmAnchor.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-    farmAnchor.P = 22
-    farmAnchor.D = 20
-    farmAnchor.Position = hrp.Position
-    farmAnchor.Parent = hrp
-    return farmAnchor
+    if S.farmAnchor then S.farmAnchor:Destroy() end
+
+    -- AlignPosition is the modern replacement for BodyPosition (deprecated)
+    local ap = Instance.new("AlignPosition")
+    ap.Name = "FarmAlign"
+    ap.MaxForce = 1e6
+    ap.Responsiveness = 12        -- smooth glide, not instant
+    ap.RigidityEnabled = false     -- allow natural drift
+    ap.ApplyAtCenterOfMass = true
+    ap.Mode = Enum.PositionAlignmentMode.OneAttachment
+    ap.Position = hrp.Position
+    ap.Parent = hrp
+
+    local att = Instance.new("Attachment")
+    att.Name = "FarmAtt"
+    att.Parent = hrp
+    ap.Attachment0 = att
+
+    S.farmAnchor = ap
+    S.farmAnchorAtt = att
+    return ap
 end
 
+local function destroyFarmAnchor()
+    if S.farmAnchor then S.farmAnchor:Destroy() S.farmAnchor = nil end
+    if S.farmAnchorAtt then S.farmAnchorAtt:Destroy() S.farmAnchorAtt = nil end
+end
+
+-- ============================================================
+-- FLEE ANCHOR (upward flight)
+-- ============================================================
+local function getOrCreateFleeAnchor(hrp)
+    if S.fleeAnchor and S.fleeAnchor.Parent == hrp then
+        return S.fleeAnchor
+    end
+    if S.fleeAnchor then S.fleeAnchor:Destroy() end
+
+    local ap = Instance.new("AlignPosition")
+    ap.Name = "FleeAlign"
+    ap.MaxForce = 1e6
+    ap.Responsiveness = 20        -- snappier for escape
+    ap.RigidityEnabled = false
+    ap.ApplyAtCenterOfMass = true
+    ap.Mode = Enum.PositionAlignmentMode.OneAttachment
+    ap.Position = hrp.Position + Vector3.new(0, 200, 0)  -- fly UP
+    ap.Parent = hrp
+
+    local att = Instance.new("Attachment")
+    att.Name = "FleeAtt"
+    att.Parent = hrp
+    ap.Attachment0 = att
+
+    S.fleeAnchor = ap
+    S.fleeAnchorAtt = att
+    return ap
+end
+
+local function destroyFleeAnchor()
+    if S.fleeAnchor then S.fleeAnchor:Destroy() S.fleeAnchor = nil end
+    if S.fleeAnchorAtt then S.fleeAnchorAtt:Destroy() S.fleeAnchorAtt = nil end
+end
+
+-- ============================================================
+-- AUTO FARM LOOP
+-- ============================================================
 local function autoFarmCoins()
     if not S.autoFarmOn then return end
     if tick() < S.fleeUntil then return end
@@ -2427,16 +2482,21 @@ local function autoFarmCoins()
     local c = player.Character
     if not c then return end
     local hrp = c:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return end
 
     if isPlayerInSpawn(player) then return end
+
+    -- Lay avatar down so anti-cheat sees a non-standing state
+    hum.PlatformStand = true
 
     if isBagFull() then
         if not S.autoFarmBagFullNotified then
             S.autoFarmBagFullNotified = true
             sendNotification("Auto Farm", "Bag full — running role action", SOUNDS.notify)
         end
-        if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
+        destroyFarmAnchor()
+        hum.PlatformStand = false
         S.currentFarmCoin = nil
         runPostBagAction()
         return
@@ -2449,6 +2509,7 @@ local function autoFarmCoins()
 
     local safeY = getSafeUnderMapY()
 
+    -- Pick nearest coin (skip ones near murderer)
     if not S.currentFarmCoin or not S.currentFarmCoin.Parent then
         S.currentFarmCoin = nil
 
@@ -2480,14 +2541,17 @@ local function autoFarmCoins()
     local coin = S.currentFarmCoin
     if not coin or not coin.Parent then return end
 
+    -- Smoothly glide to coin XZ while staying under map
     local anchor = getOrCreateFarmAnchor(hrp)
     anchor.Position = Vector3.new(coin.Position.X, safeY, coin.Position.Z)
 end
 
+-- ============================================================
+-- FLEE CHECK (heartbeat — reacts instantly)
+-- ============================================================
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.autoFarmOn then return end
-    if farmAnchor and farmAnchor.Parent then return end
 
     local c = player.Character
     if not c then return end
@@ -2505,13 +2569,18 @@ RunService.Heartbeat:Connect(function()
     local mrXZ = Vector2.new(mr.Position.X, mr.Position.Z)
     local distXZ = (hrpXZ - mrXZ).Magnitude
 
-    if distXZ <= S.FLEE_TRIGGER_DIST then
-        if tick() - S.lastFleeTP < S.FLEE_TP_INTERVAL then return end
-        S.lastFleeTP = tick()
-        S.fleeUntil = tick() + 2.0
+    -- Trigger flee if murderer too close and not already fleeing
+    if distXZ <= S.FLEE_TRIGGER_DIST and tick() >= S.fleeUntil then
+        S.fleeUntil = tick() + S.FLEE_DURATION
         S.currentFarmCoin = nil
-        anchorUnderMap(hrp)
-        sendNotification("Auto Farm", "Murderer nearby — hiding under map", SOUNDS.alert)
+
+        -- Destroy farm anchor, create flee anchor (fly UP)
+        destroyFarmAnchor()
+        local fleeAp = getOrCreateFleeAnchor(hrp)
+        fleeAp.Position = hrp.Position + Vector3.new(0, 200, 0)
+        hum.PlatformStand = true
+
+        sendNotification("Auto Farm", "Murderer nearby — flying away!", SOUNDS.alert)
     end
 end)
 
@@ -3052,7 +3121,7 @@ RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.antiVoidEnabled or S.antiVoidCooldown then return end
     if S.flyEnabled then return end
-    if (farmAnchor and farmAnchor.Parent) or (gunTpAnchor and gunTpAnchor.Parent) then return end
+    if (S.farmAnchor and S.farmAnchor.Parent) or (S.fleeAnchor and S.fleeAnchor.Parent) or (gunTpAnchor and gunTpAnchor.Parent) then return end
 
     local c = player.Character
     if not c then return end
@@ -3130,7 +3199,8 @@ player.CharacterAdded:Connect(function(character)
     S.lastFarmTP = 0
     S.lastFleeTP = 0
     if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
-    if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
+    destroyFarmAnchor()
+    destroyFleeAnchor()
     if speedBV then speedBV:Destroy() speedBV = nil end
     if S.noclip then
         task.wait(0.1)
@@ -3436,12 +3506,14 @@ RunService.Heartbeat:Connect(function()
         U.crosshairV.BackgroundColor3 = color
         U.crosshairDot.BackgroundColor3 = Color3.fromHSV((hue + 0.5) % 1, 1, 1)
     end
+    -- Self ESP button rainbow gradient (same theme as title)
     if S.rainbowSelfESP and U.selfRainbowBtn then
         local g = U.selfRainbowBtn:FindFirstChild("RainbowGradient")
         if g then
             g.Offset = Vector2.new(hue, 0)
         end
     end
+    -- Self Rainbow ESP highlight colour
     if S.rainbowSelfESP then
         local c = player.Character
         if c then
