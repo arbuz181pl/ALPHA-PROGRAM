@@ -9,6 +9,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
+local TeleportService = game:GetService("TeleportService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -747,7 +748,7 @@ flyPlus.MouseButton1Click:Connect(function() updateFlySpeed(flySpeed + 1) end)
 flySpeedBox.FocusLost:Connect(function() updateFlySpeed(flySpeedBox.Text) end)
 
 --==================================================
--- FLY (rewritten — basic PlatformStand fly)
+-- FLY (basic PlatformStand fly)
 --==================================================
 
 local function stopFly()
@@ -1196,7 +1197,6 @@ local function attackTarget(target)
 	end
 end
 
--- [FIX] Kill All — tight loop, no spawn filter, one-frame wait between attacks.
 local function killAllPlayers()
 	local character = player.Character
 	if not character then return end
@@ -1340,7 +1340,6 @@ local function findGunTargetPart()
 	return nil
 end
 
--- [REWORK] Teleport To Gun — TP to gun, wait for pickup, return to saved position
 local function teleportToGunAndBack()
 	local character = player.Character
 	if not character then return false end
@@ -1359,7 +1358,6 @@ local function teleportToGunAndBack()
 	return true
 end
 
--- [REWORK] Auto TP to Gun — TP to gun, wait, TP to top of map above gun
 local lastAutoGunTP = 0
 local function autoTPGunTop()
 	local now = tick()
@@ -1583,6 +1581,21 @@ antiFlingButton.MouseButton1Click:Connect(function()
 		setToggleOn(antiFlingButton, antiFlingIndicator)
 	else
 		setToggleOff(antiFlingButton, antiFlingIndicator)
+	end
+end)
+
+-- [NEW] Rejoin Server button
+local rejoinButton = createActionButton("Rejoin", "Rejoin Server")
+rejoinButton.MouseButton1Click:Connect(function()
+	sendNotification("MM2 Menu", "Rejoining server...")
+	task.wait(0.5)
+	local ok = pcall(function()
+		TeleportService:Teleport(game.PlaceId, player)
+	end)
+	if not ok then
+		pcall(function()
+			TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
+		end)
 	end
 end)
 
@@ -2056,7 +2069,7 @@ RunService.Stepped:Connect(function()
 end)
 
 --==================================================
--- ANTI VOID LOOP (no teleport-to-player)
+-- ANTI VOID LOOP
 --==================================================
 
 RunService.Heartbeat:Connect(function()
@@ -2228,13 +2241,11 @@ lockButton.MouseButton1Click:Connect(function()
 	end
 end)
 
--- [REWORK] Minus now minimizes to the small MM2 circle
 minimizeButton.MouseButton1Click:Connect(function()
 	minimizeMenu()
 	sendNotification("MM2 Menu", "Menu minimized. Click 'MM2' or press Right Shift to reopen.")
 end)
 
--- [REWORK] X now fully closes the script
 closeButton.MouseButton1Click:Connect(function()
 	closeScript()
 end)
