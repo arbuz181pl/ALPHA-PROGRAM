@@ -40,7 +40,7 @@ local S = {
     autoFarmOn = false,
     autoFarmBagFullNotified = false,
     lastKnownMurderer = nil,
-    flySpeed = 50, speedhackEnabled = false, speedhackSpeed = 45,
+    flySpeed = 50, speedhackEnabled = false, speedhackSpeed = 40,
     guiLocked = false, flyPanelLocked = false, minimized = false, menuVisible = true,
     espEnabled = { Innocent = false, Murderer = false, Sheriff = false, Hero = false },
     gunESPEnabled = false, gunHighlights = {}, originalCollision = {},
@@ -64,6 +64,11 @@ local S = {
     fleeUntil = 0,
     FLEE_TRIGGER_DIST = 8,
     FLEE_KEEP_DIST = 25,
+    -- Teleport throttling (anti-kick)
+    lastFarmTP = 0,
+    lastFleeTP = 0,
+    FARM_TP_INTERVAL = 0.4,
+    FLEE_TP_INTERVAL = 1.2,
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
         infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
@@ -110,6 +115,9 @@ local currentParent = nil
 
 -- Gun-TP under-map anchor (used by Auto Gun TP, Auto Farm flee, and referenced by Anti-Void)
 local gunTpAnchor = nil
+
+-- Speedhack bypass — BodyVelocity driven, WalkSpeed stays at 16 so server never flags
+local speedBV = nil
 
 local function playSound(id, vol)
     local snd = Instance.new("Sound")
@@ -880,9 +888,32 @@ U.fib.MouseButton1Click:Connect(function()
     end
 end)
 
-createSectionTitle("SPEEDHACK")
+createSectionTitle("SPEEDHACK (Anti-Kick)")
 
 U.shBtn, U.shInd = createToggle("Speedhack", "Speedhack")
+U.shBtn.MouseButton1Click:Connect(function()
+    S.speedhackEnabled = not S.speedhackEnabled
+    if S.speedhackEnabled then
+        setOn(U.shBtn, U.shInd)
+        local c = player.Character
+        local r = c and c:FindFirstChild("HumanoidRootPart")
+        local h = c and c:FindFirstChildOfClass("Humanoid")
+        if r and h then
+            h.WalkSpeed = 16  -- keep default so server anti-cheat sees normal speed
+            if speedBV then speedBV:Destroy() end
+            speedBV = Instance.new("BodyVelocity")
+            speedBV.MaxForce = Vector3.new(9e9, 0, 9e9)
+            speedBV.P = 4000
+            speedBV.Velocity = Vector3.zero
+            speedBV.Parent = r
+        end
+    else
+        setOff(U.shBtn, U.shInd)
+        if speedBV then speedBV:Destroy() speedBV = nil end
+        local c = player.Character
+        if c then local h = c:FindFirstChildOfClass("Humanoid") if h then h.WalkSpeed = 16 end end
+    end
+end)
 
 U.shRow = Instance.new("Frame")
 U.shRow.Size = UDim2.new(1, 0, 0, 32)
@@ -907,7 +938,7 @@ U.shBox.Size = UDim2.fromOffset(50, 32)
 U.shBox.Position = UDim2.fromOffset(42, 0)
 U.shBox.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
 U.shBox.BorderSizePixel = 0
-U.shBox.Text = "45"
+U.shBox.Text = "40"
 U.shBox.TextColor3 = Color3.fromRGB(235, 235, 240)
 U.shBox.TextSize = 12
 U.shBox.Font = Enum.Font.GothamSemibold
@@ -932,7 +963,7 @@ U.shLbl = Instance.new("TextLabel")
 U.shLbl.Size = UDim2.new(1, -145, 0, 32)
 U.shLbl.Position = UDim2.fromOffset(145, 0)
 U.shLbl.BackgroundTransparency = 1
-U.shLbl.Text = "WalkSpeed"
+U.shLbl.Text = "Speed (max 60 — anti-kick)"
 U.shLbl.TextColor3 = Color3.fromRGB(150, 153, 165)
 U.shLbl.TextSize = 11
 U.shLbl.Font = Enum.Font.GothamBold
@@ -941,7 +972,8 @@ U.shLbl.Parent = U.shRow
 
 local function updateSH(v)
     v = tonumber(v) or S.speedhackSpeed
-    v = math.clamp(math.floor(v), 1, 100)
+    -- Cap at 60 to stay under MM2 anti-cheat velocity detection
+    v = math.clamp(math.floor(v), 1, 60)
     S.speedhackSpeed = v
     U.shBox.Text = tostring(v)
 end
@@ -949,25 +981,35 @@ U.shMinus.MouseButton1Click:Connect(function() updateSH(S.speedhackSpeed - 5) en
 U.shPlus.MouseButton1Click:Connect(function() updateSH(S.speedhackSpeed + 5) end)
 U.shBox.FocusLost:Connect(function() updateSH(U.shBox.Text) end)
 
-U.shBtn.MouseButton1Click:Connect(function()
-    S.speedhackEnabled = not S.speedhackEnabled
-    if S.speedhackEnabled then
-        setOn(U.shBtn, U.shInd)
-        local c = player.Character
-        if c then local h = c:FindFirstChildOfClass("Humanoid") if h then h.WalkSpeed = S.speedhackSpeed end end
-    else
-        setOff(U.shBtn, U.shInd)
-        local c = player.Character
-        if c then local h = c:FindFirstChildOfClass("Humanoid") if h then h.WalkSpeed = 16 end end
-    end
-end)
-
+-- Speedhack driver — BodyVelocity on HRP in the direction the player is moving
 RunService.RenderStepped:Connect(function()
     if not S.speedhackEnabled then return end
+    -- Don't fight Fly
+    if S.flyEnabled then
+        if speedBV then speedBV.Velocity = Vector3.zero end
+        return
+    end
     local c = player.Character
     if not c then return end
+    local r = c:FindFirstChild("HumanoidRootPart")
     local h = c:FindFirstChildOfClass("Humanoid")
-    if h and h.WalkSpeed ~= S.speedhackSpeed then h.WalkSpeed = S.speedhackSpeed end
+    if not r or not h then return end
+    if not speedBV or speedBV.Parent ~= r then
+        if speedBV then speedBV:Destroy() end
+        speedBV = Instance.new("BodyVelocity")
+        speedBV.MaxForce = Vector3.new(9e9, 0, 9e9)
+        speedBV.P = 4000
+        speedBV.Parent = r
+    end
+    h.WalkSpeed = 16  -- always keep base value normal
+    local move = h.MoveDirection
+    local flat = Vector3.new(move.X, 0, move.Z)
+    local vy = r.AssemblyLinearVelocity.Y
+    if flat.Magnitude > 0.01 then
+        speedBV.Velocity = flat.Unit * S.speedhackSpeed + Vector3.new(0, vy, 0)
+    else
+        speedBV.Velocity = Vector3.new(0, vy, 0)
+    end
 end)
 
 -- ============================================================
@@ -1513,7 +1555,8 @@ local function getSafeUnderMapY()
     end
     if lowest == math.huge or lowest < -200 then lowest = 0 end
     local candidate = lowest - 15
-    local minSafe = S.VOID_Y_THRESHOLD + 10
+    -- Stay well above void threshold to avoid anti-cheat "invalid position" kick
+    local minSafe = S.VOID_Y_THRESHOLD + 15
     if candidate < minSafe then candidate = minSafe end
     return candidate
 end
@@ -1908,6 +1951,7 @@ local function resetAllToggles(silent)
     if S.speedhackEnabled then
         S.speedhackEnabled = false
         setOff(U.shBtn, U.shInd)
+        if speedBV then speedBV:Destroy() speedBV = nil end
         local c = player.Character
         if c then local h = c:FindFirstChildOfClass("Humanoid") if h then h.WalkSpeed = 16 end end
     end
@@ -1976,6 +2020,8 @@ local function resetAllToggles(silent)
         S.safeSpot = nil
         S.fleeUntil = 0
         S.recentCoins = {}
+        S.lastFarmTP = 0
+        S.lastFleeTP = 0
         if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
     end
     if S.notifyRoundStart then S.notifyRoundStart = false setOff(U.rStartBtn, U.rStartInd) end
@@ -2089,11 +2135,7 @@ local function goToSafeSpot()
     if not hrp then return end
     if not S.safeSpot then
         local y = getMapY()
-        if math.random() < 0.5 then
-            S.safeSpot = Vector3.new(hrp.Position.X, y + 500, hrp.Position.Z)
-        else
-            S.safeSpot = Vector3.new(hrp.Position.X, y - 200, hrp.Position.Z)
-        end
+        S.safeSpot = Vector3.new(hrp.Position.X, y + 500, hrp.Position.Z)
     end
     hrp.CFrame = CFrame.new(S.safeSpot)
     hrp.Velocity = Vector3.zero
@@ -2169,7 +2211,7 @@ local function runPostBagAction()
     end
 end
 
--- Fast auto farm: gets called every ~0.05s from its own loop.
+-- Fast auto farm — throttled to 0.4s between teleports to stay under anti-cheat radar.
 local function autoFarmCoins()
     if not S.autoFarmOn then return end
 
@@ -2200,10 +2242,12 @@ local function autoFarmCoins()
     -- Release any leftover under-map anchor before farming
     if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
 
-    -- Clean up old recently-visited coin entries
-    local now = tick()
-    for coin, t in pairs(S.recentCoins) do
-        if now - t > 2 or not coin or not coin.Parent then
+    -- Enforce a minimum interval between teleports to avoid anti-cheat kicks
+    if tick() - S.lastFarmTP < S.FARM_TP_INTERVAL then return end
+
+    -- Clean up old recently-visited coin entries when the coin is gone
+    for coin, _ in pairs(S.recentCoins) do
+        if not coin or not coin.Parent then
             S.recentCoins[coin] = nil
         end
     end
@@ -2218,7 +2262,7 @@ local function autoFarmCoins()
         end
     end
 
-    -- Find nearest coin we haven't visited recently and that's not next to murderer
+    -- Find nearest coin we haven't visited and that isn't near the murderer
     local nearest = nil
     local nearestDist = math.huge
     for _, coin in ipairs(container:GetChildren()) do
@@ -2238,13 +2282,14 @@ local function autoFarmCoins()
 
     if not nearest then return end
 
-    S.recentCoins[nearest] = now
+    S.recentCoins[nearest] = tick()
+    S.lastFarmTP = tick()
     hrp.CFrame = CFrame.new(nearest.Position + Vector3.new(0, 2, 0))
     hrp.Velocity = Vector3.zero
     hrp.AssemblyLinearVelocity = Vector3.zero
 end
 
--- Flee check heartbeat: fires faster than the farm loop and reacts instantly.
+-- Flee check heartbeat: reacts fast when murderer gets close.
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.autoFarmOn then return end
@@ -2274,6 +2319,9 @@ RunService.Heartbeat:Connect(function()
 
     -- Trigger fresh flee
     if distXZ <= S.FLEE_TRIGGER_DIST and tick() >= S.fleeUntil then
+        -- Throttle flee teleports too
+        if tick() - S.lastFleeTP < S.FLEE_TP_INTERVAL then return end
+        S.lastFleeTP = tick()
         S.fleeUntil = tick() + 1.5
         anchorUnderMap(hrp)
         sendNotification("Auto Farm", "Murderer within " .. math.floor(distXZ) .. " studs — hiding!", SOUNDS.alert)
@@ -2352,9 +2400,9 @@ U.pvpPresetBtn.MouseButton1Click:Connect(applyPvpPreset)
 
 createSectionTitle("COIN FARM")
 local afInfo = Instance.new("TextLabel")
-afInfo.Size = UDim2.new(1, 0, 0, 110)
+afInfo.Size = UDim2.new(1, 0, 0, 130)
 afInfo.BackgroundTransparency = 1
-afInfo.Text = "Auto Farm teleports to coins and forces Anti AFK on.\nWhen your bag hits 40 coins it automatically does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab dropped gun & shoot, else hide at safe spot\n\nIf the murderer gets within 8 studs while farming,\nyou instantly hide under the map until they leave."
+afInfo.Text = "Auto Farm teleports to coins and forces Anti AFK on.\nWhen your bag hits 40 coins it automatically does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab dropped gun & shoot, else hide at safe spot\n\nIf the murderer gets within 8 studs while farming,\nyou instantly hide under the map until they leave.\nTeleports throttled to prevent anti-cheat kicks."
 afInfo.TextColor3 = Color3.fromRGB(150, 153, 165)
 afInfo.TextSize = 11
 afInfo.Font = Enum.Font.Gotham
@@ -2385,6 +2433,8 @@ U.autoFarmBtn.MouseButton1Click:Connect(function()
         S.safeSpot = nil
         S.fleeUntil = 0
         S.recentCoins = {}
+        S.lastFarmTP = 0
+        S.lastFleeTP = 0
         sendNotification("MM2 Menu", "Auto Farm ON — collecting coins", SOUNDS.success)
     else
         setOff(U.autoFarmBtn, U.autoFarmInd)
@@ -3022,7 +3072,10 @@ player.CharacterAdded:Connect(function(character)
     S.safeSpot = nil
     S.fleeUntil = 0
     S.recentCoins = {}
+    S.lastFarmTP = 0
+    S.lastFleeTP = 0
     if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
+    if speedBV then speedBV:Destroy() speedBV = nil end
     if S.noclip then
         task.wait(0.1)
         for _, o in ipairs(character:GetDescendants()) do
@@ -3036,7 +3089,18 @@ player.CharacterAdded:Connect(function(character)
     local h = character:FindFirstChildOfClass("Humanoid")
     if h then
         h.PlatformStand = false
-        if S.speedhackEnabled then h.WalkSpeed = S.speedhackSpeed end
+        h.WalkSpeed = 16
+    end
+    -- Restart speedhack if it was on before respawn
+    if S.speedhackEnabled then
+        local r = character:FindFirstChild("HumanoidRootPart")
+        if r then
+            speedBV = Instance.new("BodyVelocity")
+            speedBV.MaxForce = Vector3.new(9e9, 0, 9e9)
+            speedBV.P = 4000
+            speedBV.Velocity = Vector3.zero
+            speedBV.Parent = r
+        end
     end
     updateHL()
 end)
@@ -3190,9 +3254,20 @@ kbActions.speedhack = function()
     if S.speedhackEnabled then
         setOn(U.shBtn, U.shInd)
         local c = player.Character
-        if c then local h = c:FindFirstChildOfClass("Humanoid") if h then h.WalkSpeed = S.speedhackSpeed end end
+        local r = c and c:FindFirstChild("HumanoidRootPart")
+        local h = c and c:FindFirstChildOfClass("Humanoid")
+        if r and h then
+            h.WalkSpeed = 16
+            if speedBV then speedBV:Destroy() end
+            speedBV = Instance.new("BodyVelocity")
+            speedBV.MaxForce = Vector3.new(9e9, 0, 9e9)
+            speedBV.P = 4000
+            speedBV.Velocity = Vector3.zero
+            speedBV.Parent = r
+        end
     else
         setOff(U.shBtn, U.shInd)
+        if speedBV then speedBV:Destroy() speedBV = nil end
         local c = player.Character
         if c then local h = c:FindFirstChildOfClass("Humanoid") if h then h.WalkSpeed = 16 end end
     end
@@ -3298,14 +3373,14 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ============================================================
--- AUTO FARM FAST LOOP (0.05s — 20Hz)
+-- AUTO FARM LOOP (0.2s — checks teleport cooldown inside)
 -- ============================================================
 task.spawn(function()
     while U.gui and U.gui.Parent and not S.scriptClosed do
         if S.autoFarmOn then
             pcall(autoFarmCoins)
         end
-        task.wait(0.05)
+        task.wait(0.2)
     end
 end)
 
