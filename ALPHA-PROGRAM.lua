@@ -24,6 +24,8 @@ local ROLE_COLORS = {
 	Hero = Color3.fromRGB(255, 205, 50),
 }
 
+local GUN_COLOR = Color3.fromRGB(170, 90, 230)
+
 local noclip = false
 local infinityJump = false
 local flingOnTouch = false
@@ -37,7 +39,7 @@ local autoSendMurdererChat = false
 local antiVoidEnabled = false
 local antiFlingEnabled = false
 
-local flySpeed = 1
+local flySpeed = 50
 
 local speedhackEnabled = false
 local speedhackSpeed = 45
@@ -52,6 +54,9 @@ local espEnabled = {
 	Sheriff = false,
 	Hero = false,
 }
+
+local gunESPEnabled = false
+local gunHighlights = {}
 
 local originalCollision = {}
 
@@ -74,10 +79,7 @@ local flyCharacter = nil
 local flyHumanoid = nil
 local flyRoot = nil
 
-local flyControls = { f = 0, b = 0, l = 0, r = 0, up = 0, down = 0 }
-local lastFlyControls = { f = 0, b = 0, l = 0, r = 0, up = 0, down = 0 }
-local flyCurrentSpeed = 0
-local flyMaxSpeed = 50
+local flyControls = { up = 0, down = 0 }
 
 --==================================================
 -- FLING ON TOUCH VARIABLES
@@ -107,10 +109,8 @@ pcall(function()
 	GetPlayerData = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
 end)
 
--- [FIX 15] one-time warning flag
 local warnedNoRemote = false
 
--- PERSISTENT role names — only reset on round change, not every poll
 local MurdererName = nil
 local SheriffName = nil
 local HeroName = nil
@@ -119,7 +119,6 @@ local lastNotifiedMurderer = nil
 local lastNotifiedSheriff = nil
 local lastNotifiedHero = nil
 
--- [FIX 4/5] Round-end tracking
 local noMurdererSince = nil
 local ROUND_END_DEBOUNCE = 2.0
 
@@ -471,6 +470,52 @@ local function setToggleOff(button, indicator)
 end
 
 --==================================================
+-- SPAWN & LOBBY PROTECTION (cached)
+--==================================================
+
+local cachedSpawns = {}
+
+local function refreshSpawnCache()
+	local newCache = {}
+	for _, spawnObject in ipairs(workspace:GetDescendants()) do
+		if spawnObject:IsA("SpawnLocation") or (spawnObject:IsA("BasePart") and spawnObject.Name == "SpawnPoint") then
+			table.insert(newCache, spawnObject)
+		end
+	end
+	cachedSpawns = newCache
+end
+
+local function isPlayerInSpawn(target)
+	if not target or not target.Character then return true end
+
+	local lobby = workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("LobbyMap")
+	if lobby and target.Character:IsDescendantOf(lobby) then
+		return true
+	end
+
+	local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
+	if not targetRoot then return true end
+
+	for _, spawnObject in ipairs(cachedSpawns) do
+		if spawnObject and spawnObject.Parent then
+			if (targetRoot.Position - spawnObject.Position).Magnitude < 35 then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+refreshSpawnCache()
+task.spawn(function()
+	while gui.Parent do
+		pcall(refreshSpawnCache)
+		task.wait(10)
+	end
+end)
+
+--==================================================
 -- MOVEMENT SETTINGS
 --==================================================
 
@@ -590,7 +635,7 @@ flySpeedLabel.Name = "SpeedLabel"
 flySpeedLabel.Size = UDim2.new(1, -20, 0, 20)
 flySpeedLabel.Position = UDim2.fromOffset(10, 98)
 flySpeedLabel.BackgroundTransparency = 1
-flySpeedLabel.Text = "Speed: 1"
+flySpeedLabel.Text = "Speed: 50"
 flySpeedLabel.TextColor3 = Color3.fromRGB(150, 153, 165)
 flySpeedLabel.TextSize = 11
 flySpeedLabel.Font = Enum.Font.GothamBold
@@ -622,7 +667,7 @@ flySpeedBox.Size = UDim2.new(1, -96, 0, 32)
 flySpeedBox.Position = UDim2.fromOffset(52, 123)
 flySpeedBox.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
 flySpeedBox.BorderSizePixel = 0
-flySpeedBox.Text = "1"
+flySpeedBox.Text = "50"
 flySpeedBox.TextColor3 = Color3.fromRGB(235, 235, 240)
 flySpeedBox.TextSize = 12
 flySpeedBox.Font = Enum.Font.GothamSemibold
@@ -701,24 +746,25 @@ flyMinus.MouseButton1Click:Connect(function() updateFlySpeed(flySpeed - 1) end)
 flyPlus.MouseButton1Click:Connect(function() updateFlySpeed(flySpeed + 1) end)
 flySpeedBox.FocusLost:Connect(function() updateFlySpeed(flySpeedBox.Text) end)
 
+--==================================================
+-- FLY (rewritten — basic PlatformStand fly)
+--==================================================
+
 local function stopFly()
 	flyEnabled = false
 	if flyBodyVelocity then flyBodyVelocity:Destroy() flyBodyVelocity = nil end
 	if flyBodyGyro then flyBodyGyro:Destroy() flyBodyGyro = nil end
-	flyCurrentSpeed = 0
+
+	flyCharacter = nil
+	flyHumanoid = nil
+	flyRoot = nil
 
 	local character = player.Character
 	if character then
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
 		if humanoid then
 			humanoid.PlatformStand = false
-			for _, state in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
-				pcall(function() humanoid:SetStateEnabled(state, true) end)
-			end
-			humanoid:ChangeState(Enum.HumanoidStateType.RunningNoPhysics)
 		end
-		local animate = character:FindFirstChild("Animate")
-		if animate then animate.Disabled = false end
 	end
 
 	flyEnableButton.Text = "Enable Fly"
@@ -733,11 +779,15 @@ local function startFly()
 	local root = character:FindFirstChild("HumanoidRootPart")
 	if not humanoid or not root then return end
 
-	stopFly()
+	if flyBodyVelocity then flyBodyVelocity:Destroy() end
+	if flyBodyGyro then flyBodyGyro:Destroy() end
+
 	flyEnabled = true
 	flyCharacter = character
 	flyHumanoid = humanoid
 	flyRoot = root
+
+	humanoid.PlatformStand = true
 
 	flyBodyGyro = Instance.new("BodyGyro")
 	flyBodyGyro.P = 90000
@@ -746,22 +796,9 @@ local function startFly()
 	flyBodyGyro.Parent = root
 
 	flyBodyVelocity = Instance.new("BodyVelocity")
-	flyBodyVelocity.Velocity = Vector3.new(0, 0.1, 0)
+	flyBodyVelocity.Velocity = Vector3.zero
 	flyBodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
 	flyBodyVelocity.Parent = root
-
-	humanoid.PlatformStand = true
-	local animate = character:FindFirstChild("Animate")
-	if animate then animate.Disabled = true end
-
-	for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
-		track:AdjustSpeed(0)
-	end
-
-	for _, state in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
-		pcall(function() humanoid:SetStateEnabled(state, false) end)
-	end
-	humanoid:ChangeState(Enum.HumanoidStateType.Swimming)
 
 	flyEnableButton.Text = "Disable Fly"
 	setToggleOn(flyEnableButton, flyEnableIndicator)
@@ -786,94 +823,41 @@ flyButton.MouseButton1Click:Connect(function()
 	end
 end)
 
-UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then return end
-	if input.KeyCode == Enum.KeyCode.W then flyControls.f = 1
-	elseif input.KeyCode == Enum.KeyCode.S then flyControls.b = -1
-	elseif input.KeyCode == Enum.KeyCode.A then flyControls.l = -1
-	elseif input.KeyCode == Enum.KeyCode.D then flyControls.r = 1
-	elseif input.KeyCode == Enum.KeyCode.Space then flyControls.up = 1
-	elseif input.KeyCode == Enum.KeyCode.LeftControl then flyControls.down = -1
-	end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-	if input.KeyCode == Enum.KeyCode.W then flyControls.f = 0
-	elseif input.KeyCode == Enum.KeyCode.S then flyControls.b = 0
-	elseif input.KeyCode == Enum.KeyCode.A then flyControls.l = 0
-	elseif input.KeyCode == Enum.KeyCode.D then flyControls.r = 0
-	elseif input.KeyCode == Enum.KeyCode.Space then flyControls.up = 0
-	elseif input.KeyCode == Enum.KeyCode.LeftControl then flyControls.down = 0
-	end
-end)
-
 RunService.RenderStepped:Connect(function()
 	if not flyEnabled or not flyBodyVelocity or not flyBodyGyro then return end
 	local character = player.Character
 	if not character then stopFly() return end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	local root = character:FindFirstChild("HumanoidRootPart")
 	local camera = workspace.CurrentCamera
-	if not humanoid or not root or not camera then return end
+	if not root or not camera then return end
 
-	local mobileMove = humanoid.MoveDirection
-	local look = camera.CFrame.LookVector
-	local right = camera.CFrame.RightVector
-	local up = Vector3.new(0, 1, 0)
-
-	local keyboardForward = flyControls.f + flyControls.b
-	local keyboardRight = flyControls.l + flyControls.r
-	local keyboardVertical = flyControls.up + flyControls.down
-
-	local horizontalLook = Vector3.new(look.X, 0, look.Z)
-	local horizontalRight = Vector3.new(right.X, 0, right.Z)
-	if horizontalLook.Magnitude > 0 then horizontalLook = horizontalLook.Unit end
-	if horizontalRight.Magnitude > 0 then horizontalRight = horizontalRight.Unit end
-
-	local mobileForward, mobileRight = 0, 0
-	if mobileMove.Magnitude > 0 then
-		mobileForward = mobileMove:Dot(horizontalLook)
-		mobileRight = mobileMove:Dot(horizontalRight)
+	local direction = Vector3.zero
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+		direction = direction + camera.CFrame.LookVector
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+		direction = direction - camera.CFrame.LookVector
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+		direction = direction - camera.CFrame.RightVector
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+		direction = direction + camera.CFrame.RightVector
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) or flyControls.up == 1 then
+		direction = direction + Vector3.new(0, 1, 0)
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or flyControls.down == -1 then
+		direction = direction - Vector3.new(0, 1, 0)
 	end
 
-	local forward = math.clamp(keyboardForward + mobileForward, -1, 1)
-	local rightAmount = math.clamp(keyboardRight + mobileRight, -1, 1)
-	local vertical = math.clamp(keyboardVertical, -1, 1)
-	local moving = math.abs(forward) > 0.01 or math.abs(rightAmount) > 0.01 or math.abs(vertical) > 0.01
-
-	if moving then
-		flyCurrentSpeed = flyCurrentSpeed + 0.5 + (flyCurrentSpeed / math.max(flyMaxSpeed, 1))
-		if flyCurrentSpeed > flyMaxSpeed then flyCurrentSpeed = flyMaxSpeed end
-	else
-		if flyCurrentSpeed ~= 0 then
-			flyCurrentSpeed = flyCurrentSpeed - 1
-			if flyCurrentSpeed < 0 then flyCurrentSpeed = 0 end
-		end
-	end
-
-	local direction = look * forward + right * rightAmount + up * vertical
 	if direction.Magnitude > 0 then
-		direction = direction.Unit
-		flyBodyVelocity.Velocity = direction * flyCurrentSpeed
-		lastFlyControls.f = forward
-		lastFlyControls.b = 0
-		lastFlyControls.l = rightAmount
-		lastFlyControls.r = 0
-		lastFlyControls.up = vertical
-		lastFlyControls.down = 0
-	elseif flyCurrentSpeed ~= 0 then
-		local lastDirection = look * (lastFlyControls.f + lastFlyControls.b) + right * (lastFlyControls.l + lastFlyControls.r) + up * (lastFlyControls.up + lastFlyControls.down)
-		if lastDirection.Magnitude > 0 then
-			flyBodyVelocity.Velocity = lastDirection.Unit * flyCurrentSpeed
-		else
-			flyBodyVelocity.Velocity = Vector3.zero
-		end
+		flyBodyVelocity.Velocity = direction.Unit * flySpeed
 	else
 		flyBodyVelocity.Velocity = Vector3.zero
 	end
 
-	flyBodyGyro.CFrame = camera.CFrame * CFrame.Angles(-math.rad(forward * 50 * flyCurrentSpeed / math.max(flyMaxSpeed, 1)), 0, 0)
-	humanoid.PlatformStand = true
+	flyBodyGyro.CFrame = camera.CFrame
 end)
 
 flyUp.MouseButton1Down:Connect(function() flyControls.up = 1 end)
@@ -1093,6 +1077,28 @@ createESPButton("Sheriff")
 createESPButton("Hero")
 
 --==================================================
+-- ITEM ESP SETTINGS (Gun)
+--==================================================
+
+createSectionTitle("ITEM ESP SETTINGS")
+
+local gunESPButton, gunESPIndicator = createToggle("GunESP", "Gun ESP")
+
+gunESPButton.MouseButton1Click:Connect(function()
+	gunESPEnabled = not gunESPEnabled
+	if gunESPEnabled then
+		gunESPButton.BackgroundColor3 = GUN_COLOR:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+		gunESPIndicator.BackgroundColor3 = GUN_COLOR
+	else
+		setToggleOff(gunESPButton, gunESPIndicator)
+		for gun, hl in pairs(gunHighlights) do
+			if hl then pcall(function() hl:Destroy() end) end
+		end
+		gunHighlights = {}
+	end
+end)
+
+--==================================================
 -- NOTIFIER SETTINGS
 --==================================================
 
@@ -1127,7 +1133,6 @@ autoNotifyButton.MouseButton1Click:Connect(function()
 		setToggleOn(autoNotifyButton, autoNotifyIndicator)
 	else
 		setToggleOff(autoNotifyButton, autoNotifyIndicator)
-		-- [FIX 13] reset notification sentinels so a re-enable re-fires
 		lastNotifiedMurderer = nil
 		lastNotifiedSheriff = nil
 		lastNotifiedHero = nil
@@ -1148,57 +1153,8 @@ autoMurdererChatButton.MouseButton1Click:Connect(function()
 		roundActive = false
 	else
 		setToggleOff(autoMurdererChatButton, autoMurdererChatIndicator)
-		-- [FIX 14] reset round + last-sent so a re-enable re-fires
 		lastChatSentMurderer = nil
 		roundActive = false
-	end
-end)
-
---==================================================
--- SPAWN & LOBBY PROTECTION
---==================================================
-
--- [FIX 6] Cache spawn locations once, refresh every 10s, instead of
--- walking all of workspace:GetDescendants() on every call.
-local cachedSpawns = {}
-
-local function refreshSpawnCache()
-	local newCache = {}
-	for _, spawnObject in ipairs(workspace:GetDescendants()) do
-		if spawnObject:IsA("SpawnLocation") or (spawnObject:IsA("BasePart") and spawnObject.Name == "SpawnPoint") then
-			table.insert(newCache, spawnObject)
-		end
-	end
-	cachedSpawns = newCache
-end
-
-local function isPlayerInSpawn(target)
-	if not target or not target.Character then return true end
-
-	local lobby = workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("LobbyMap")
-	if lobby and target.Character:IsDescendantOf(lobby) then
-		return true
-	end
-
-	local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
-	if not targetRoot then return true end
-
-	for _, spawnObject in ipairs(cachedSpawns) do
-		if spawnObject and spawnObject.Parent then
-			if (targetRoot.Position - spawnObject.Position).Magnitude < 35 then
-				return true
-			end
-		end
-	end
-
-	return false
-end
-
-refreshSpawnCache()
-task.spawn(function()
-	while gui.Parent do
-		pcall(refreshSpawnCache)
-		task.wait(10)
 	end
 end)
 
@@ -1234,23 +1190,39 @@ local function attackTarget(target)
 		local knife = getKnife()
 		if knife then
 			myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1.5)
-			-- [FIX 7] Wait for the position to replicate before swinging
 			task.wait(0.05)
 			pcall(function() knife:Activate() end)
 		end
 	end
 end
 
+-- [FIX] Kill All — tight loop, no spawn filter, one-frame wait between attacks.
 local function killAllPlayers()
+	local character = player.Character
+	if not character then return end
+	local myRoot = character:FindFirstChild("HumanoidRootPart")
+	if not myRoot then return end
+	local knife = getKnife()
+	if not knife then
+		sendNotification("MM2 Menu", "No knife equipped!")
+		return
+	end
+
+	local targets = {}
 	for _, target in ipairs(Players:GetPlayers()) do
 		if target ~= player and target.Character then
 			local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
-			if humanoid and humanoid.Health > 0 and not isPlayerInSpawn(target) then
-				attackTarget(target)
-				-- [FIX 8] lower throttle
-				task.wait(0.05)
+			local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
+			if humanoid and humanoid.Health > 0 and targetRoot then
+				table.insert(targets, targetRoot)
 			end
 		end
+	end
+
+	for _, targetRoot in ipairs(targets) do
+		myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1.5)
+		task.wait()
+		pcall(function() knife:Activate() end)
 	end
 end
 
@@ -1354,26 +1326,61 @@ end)
 
 createSectionTitle("TELEPORT SETTINGS")
 
-local function teleportToGun()
+local function findGunTargetPart()
+	local gunDrop = workspace:FindFirstChild("GunDrop", true) or workspace:FindFirstChild("Gun", true)
+	if not gunDrop then return nil end
+
+	if gunDrop:IsA("BasePart") then
+		return gunDrop
+	elseif gunDrop:IsA("Model") then
+		return gunDrop.PrimaryPart or gunDrop:FindFirstChildOfClass("BasePart")
+	elseif gunDrop:IsA("Tool") then
+		return gunDrop:FindFirstChild("Handle") or gunDrop:FindFirstChildOfClass("BasePart")
+	end
+	return nil
+end
+
+-- [REWORK] Teleport To Gun — TP to gun, wait for pickup, return to saved position
+local function teleportToGunAndBack()
 	local character = player.Character
 	if not character then return false end
 	local myRoot = character:FindFirstChild("HumanoidRootPart")
 	if not myRoot then return false end
 
-	local gunDrop = workspace:FindFirstChild("GunDrop", true) or workspace:FindFirstChild("Gun", true)
-	if gunDrop then
-		if gunDrop:IsA("BasePart") then
-			myRoot.CFrame = gunDrop.CFrame + Vector3.new(0, 3, 0)
-			return true
-		elseif gunDrop:IsA("Model") then
-			local primary = gunDrop.PrimaryPart or gunDrop:FindFirstChildOfClass("BasePart")
-			if primary then
-				myRoot.CFrame = primary.CFrame + Vector3.new(0, 3, 0)
-				return true
-			end
-		end
-	end
-	return false
+	local targetPart = findGunTargetPart()
+	if not targetPart then return false end
+
+	local originalCFrame = myRoot.CFrame
+
+	myRoot.CFrame = targetPart.CFrame + Vector3.new(0, 3, 0)
+	task.wait(0.35)
+	myRoot.CFrame = originalCFrame
+
+	return true
+end
+
+-- [REWORK] Auto TP to Gun — TP to gun, wait, TP to top of map above gun
+local lastAutoGunTP = 0
+local function autoTPGunTop()
+	local now = tick()
+	if now - lastAutoGunTP < 3 then return end
+
+	local character = player.Character
+	if not character then return end
+	if character:FindFirstChild("Gun") then return end
+	if character:FindFirstChild("Knife") then return end
+
+	local myRoot = character:FindFirstChild("HumanoidRootPart")
+	if not myRoot then return end
+
+	local targetPart = findGunTargetPart()
+	if not targetPart then return end
+
+	lastAutoGunTP = now
+
+	myRoot.CFrame = targetPart.CFrame + Vector3.new(0, 3, 0)
+	task.wait(0.15)
+	myRoot.CFrame = CFrame.new(targetPart.Position.X, 300, targetPart.Position.Z)
 end
 
 local autoGunButton, autoGunIndicator = createToggle("AutoGunTP", "Auto Teleport To Gun")
@@ -1408,7 +1415,7 @@ end)
 
 local gunTeleportButton = createActionButton("GunTeleport", "Teleport To Gun")
 gunTeleportButton.MouseButton1Click:Connect(function()
-	if not teleportToGun() then
+	if not teleportToGunAndBack() then
 		sendNotification("MM2 Menu", "No dropped gun found on the map!")
 	end
 end)
@@ -1437,7 +1444,6 @@ dropdownCorner.Parent = playerDropdown
 
 local dropdownOpen = false
 
--- [FIX 11] start collapsed so it doesn't reserve 120px of empty space
 local playerList = Instance.new("ScrollingFrame")
 playerList.Name = "PlayerList"
 playerList.Size = UDim2.new(1, 0, 0, 0)
@@ -1631,6 +1637,15 @@ local function resetAllToggles()
 		end
 	end
 
+	if gunESPEnabled then
+		gunESPEnabled = false
+		setToggleOff(gunESPButton, gunESPIndicator)
+		for gun, hl in pairs(gunHighlights) do
+			if hl then pcall(function() hl:Destroy() end) end
+		end
+		gunHighlights = {}
+	end
+
 	if autoNotifyRoles then
 		autoNotifyRoles = false
 		setToggleOff(autoNotifyButton, autoNotifyIndicator)
@@ -1686,7 +1701,7 @@ turnOffCorner.Parent = turnOffAllButton
 turnOffAllButton.MouseButton1Click:Connect(resetAllToggles)
 
 --==================================================
--- ESP SYSTEM (FIXED — no flicker + round-aware)
+-- ESP SYSTEM
 --==================================================
 
 local highlights = {}
@@ -1711,10 +1726,6 @@ local function IsAlive(target)
 	return humanoid and humanoid.Health > 0
 end
 
--- [FIX 4/5] A cached role holder is only valid if they are alive AND
--- out of spawn/lobby. This clears stale roles instantly when the holder
--- dies, leaves, or is stuck in the lobby — and lets the next player who
--- picks up the hero's gun get promoted to Hero on the following poll.
 local function isValidRoleHolder(name)
 	if not name then return false end
 	local targetPlayer = Players:FindFirstChild(name)
@@ -1771,12 +1782,10 @@ local function GetRoles()
 		elseif role == "Hero" then newHero = target.Name end
 	end
 
-	-- --- MURDERER ---
 	if newMurderer and isValidRoleHolder(newMurderer) then
 		MurdererName = newMurderer
 		noMurdererSince = nil
 	elseif MurdererName and not isValidRoleHolder(MurdererName) then
-		-- holder died / left / is in spawn — clear it and start round-end timer
 		MurdererName = nil
 		lastNotifiedMurderer = nil
 		lastChatSentMurderer = nil
@@ -1784,7 +1793,6 @@ local function GetRoles()
 		noMurdererSince = tick()
 	end
 
-	-- --- SHERIFF ---
 	if newSheriff and isValidRoleHolder(newSheriff) then
 		SheriffName = newSheriff
 	elseif SheriffName and not isValidRoleHolder(SheriffName) then
@@ -1792,7 +1800,6 @@ local function GetRoles()
 		lastNotifiedSheriff = nil
 	end
 
-	-- --- HERO (re-pickup works because we clear the dead hero immediately) ---
 	if newHero and isValidRoleHolder(newHero) then
 		HeroName = newHero
 	elseif HeroName and not isValidRoleHolder(HeroName) then
@@ -1800,7 +1807,6 @@ local function GetRoles()
 		lastNotifiedHero = nil
 	end
 
-	-- --- ROUND-END HARD RESET ---
 	if MurdererName == nil and noMurdererSince and (tick() - noMurdererSince) >= ROUND_END_DEBOUNCE then
 		MurdererName = nil
 		SheriffName = nil
@@ -1838,7 +1844,6 @@ local function UpdateHighlights()
 			elseif HeroName and target.Name == HeroName then role = "Hero"
 			else role = "Innocent" end
 
-			-- [FIX 4/5] never show role color to a dead player or one in spawn
 			local showRoleColor = IsAlive(target) and not isPlayerInSpawn(target)
 
 			if not showRoleColor then
@@ -1903,6 +1908,75 @@ Players.PlayerRemoving:Connect(function(target)
 	if SheriffName == target.Name then SheriffName = nil end
 	if HeroName == target.Name then HeroName = nil end
 end)
+
+--==================================================
+-- GUN ESP SYSTEM
+--==================================================
+
+local lastGunScan = 0
+local GUN_SCAN_INTERVAL = 0.5
+
+local function isGunHeldByPlayer(gun)
+	for _, p in ipairs(Players:GetPlayers()) do
+		local char = p.Character
+		if char and gun:IsDescendantOf(char) then
+			return true
+		end
+	end
+	return false
+end
+
+local function isDroppedGun(inst)
+	if not inst or not inst.Parent then return false end
+	if inst.Name ~= "Gun" and inst.Name ~= "GunDrop" then return false end
+	if not (inst:IsA("BasePart") or inst:IsA("Model") or inst:IsA("Tool")) then return false end
+	if isGunHeldByPlayer(inst) then return false end
+	return true
+end
+
+local function attachGunHighlight(gun)
+	if gunHighlights[gun] then return end
+	local hl = Instance.new("Highlight")
+	hl.Name = "GunESP"
+	hl.FillColor = GUN_COLOR
+	hl.OutlineColor = GUN_COLOR
+	hl.FillTransparency = 0.4
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = gun
+	gunHighlights[gun] = hl
+end
+
+local function removeGunHighlight(gun)
+	local hl = gunHighlights[gun]
+	if hl then pcall(function() hl:Destroy() end) end
+	gunHighlights[gun] = nil
+end
+
+local function updateGunESP()
+	for gun, _ in pairs(gunHighlights) do
+		if not gun or not gun.Parent or not isDroppedGun(gun) then
+			removeGunHighlight(gun)
+		end
+	end
+
+	if not gunESPEnabled then
+		for gun, _ in pairs(gunHighlights) do
+			removeGunHighlight(gun)
+		end
+		return
+	end
+
+	local now = tick()
+	if now - lastGunScan < GUN_SCAN_INTERVAL then return end
+	lastGunScan = now
+
+	for _, inst in ipairs(workspace:GetDescendants()) do
+		if isDroppedGun(inst) and not gunHighlights[inst] then
+			attachGunHighlight(inst)
+		end
+	end
+end
 
 --==================================================
 -- AUTO CHAT MURDERER SENDER
@@ -1982,7 +2056,7 @@ RunService.Stepped:Connect(function()
 end)
 
 --==================================================
--- ANTI VOID LOOP (no more teleport-to-player)
+-- ANTI VOID LOOP (no teleport-to-player)
 --==================================================
 
 RunService.Heartbeat:Connect(function()
@@ -2000,7 +2074,6 @@ RunService.Heartbeat:Connect(function()
 		if spawnLocation then
 			root.CFrame = CFrame.new(spawnLocation.Position + Vector3.new(0, 5, 0))
 		else
-			-- fallback: teleport straight up above the void
 			root.CFrame = CFrame.new(root.Position.X, 100, root.Position.Z)
 		end
 		root.Velocity = Vector3.zero
@@ -2054,19 +2127,8 @@ end)
 
 player.CharacterAdded:Connect(function(character)
 	stopFly()
-	flyControls.f = 0
-	flyControls.b = 0
-	flyControls.l = 0
-	flyControls.r = 0
 	flyControls.up = 0
 	flyControls.down = 0
-
-	lastFlyControls.f = 0
-	lastFlyControls.b = 0
-	lastFlyControls.l = 0
-	lastFlyControls.r = 0
-	lastFlyControls.up = 0
-	lastFlyControls.down = 0
 
 	originalCollision = {}
 	lastSafePosition = nil
@@ -2126,7 +2188,7 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 --==================================================
--- LOCK / MINIMIZE / CLOSE / REOPEN
+-- SHOW / MINIMIZE / CLOSE
 --==================================================
 
 local function showMenu()
@@ -2135,12 +2197,24 @@ local function showMenu()
 	reopenButton.Visible = false
 end
 
-local function hideMenu()
+local function minimizeMenu()
 	menuVisible = false
 	frame.Visible = false
 	flyPanel.Visible = false
 	flyPanelOpen = false
 	reopenButton.Visible = true
+end
+
+local function closeScript()
+	pcall(function() resetAllToggles() end)
+	pcall(function() stopFly() end)
+	pcall(function() 
+		for gun, hl in pairs(gunHighlights) do
+			if hl then hl:Destroy() end
+		end
+	end)
+	sendNotification("MM2 Menu", "Script closed.")
+	pcall(function() gui:Destroy() end)
 end
 
 lockButton.MouseButton1Click:Connect(function()
@@ -2154,22 +2228,15 @@ lockButton.MouseButton1Click:Connect(function()
 	end
 end)
 
+-- [REWORK] Minus now minimizes to the small MM2 circle
 minimizeButton.MouseButton1Click:Connect(function()
-	minimized = not minimized
-	if minimized then
-		content.Visible = false
-		frame.Size = UDim2.fromOffset(280, 48)
-		minimizeButton.Text = "+"
-	else
-		content.Visible = true
-		frame.Size = UDim2.fromOffset(280, 330)
-		minimizeButton.Text = "-"
-	end
+	minimizeMenu()
+	sendNotification("MM2 Menu", "Menu minimized. Click 'MM2' or press Right Shift to reopen.")
 end)
 
+-- [REWORK] X now fully closes the script
 closeButton.MouseButton1Click:Connect(function()
-	hideMenu()
-	sendNotification("MM2 Menu", "Menu closed. Click 'MM2' or press Right Shift to reopen.")
+	closeScript()
 end)
 
 closeButton.MouseEnter:Connect(function()
@@ -2188,7 +2255,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
 	if input.KeyCode == Enum.KeyCode.RightShift then
 		if menuVisible then
-			hideMenu()
+			minimizeMenu()
 		else
 			showMenu()
 		end
@@ -2230,19 +2297,21 @@ end)
 
 GetRoles()
 UpdateHighlights()
+updateGunESP()
 
 task.spawn(function()
 	while gui.Parent do
 		pcall(function()
 			GetRoles()
 			UpdateHighlights()
+			updateGunESP()
 
 			if autoKillAll and MurdererName == player.Name then
 				killAllPlayers()
 			end
 
 			if autoGunTP then
-				teleportToGun()
+				autoTPGunTop()
 			end
 
 			checkAutoSendMurderer()
