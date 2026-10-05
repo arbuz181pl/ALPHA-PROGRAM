@@ -1,4 +1,4 @@
---// MM2 MENU BY ARBUZ v1.3
+--// MM2 MENU BY ARBUZ v1.3 (ALPHA)
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -20,6 +20,12 @@ local SOUNDS = {
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
+-- Mobile detection
+local IS_MOBILE = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local FRAME_W = IS_MOBILE and 340 or 460
+local FRAME_H = IS_MOBILE and 300 or 380
+local SIDEBAR_W = IS_MOBILE and 78 or 100
+
 local S = {
     noclip = false, infinityJump = false, flingOnTouch = false, flingThirdParty = false,
     flyEnabled = false, autoNotifyRoles = false, autoKillAll = false, autoGunTP = false,
@@ -37,7 +43,7 @@ local S = {
     menuOpacity = 100,
     murdererTrailOn = false, sheriffTrailOn = false, heroTrailOn = false,
     cameraFollowMurderer = false,
-    killSoundOn = false,
+    killSoundOn = false, sheriffHitSoundOn = false,
     autoFarmOn = false,
     autoFarmBagFullNotified = false,
     lastKnownMurderer = nil,
@@ -60,18 +66,17 @@ local S = {
     lastBagFullNotified = 0,
     safeSpot = nil,
     BAG_FULL_THRESHOLD = 40,
-    -- Auto farm state
     recentCoins = {},
     fleeUntil = 0,
     FLEE_TRIGGER_DIST = 8,
     FLEE_KEEP_DIST = 25,
-    -- Teleport pacing
     currentFarmCoin = nil,
     currentFarmTAt = 0,
     lastFarmTP = 0,
     lastFleeTP = 0,
     FARM_TP_INTERVAL = 0.6,
     FLEE_TP_INTERVAL = 1.2,
+    FARM_FLIGHT_SPEED = 55,
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
         infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
@@ -117,6 +122,7 @@ local currentLayoutOrder = 0
 local currentParent = nil
 
 local gunTpAnchor = nil
+local farmAnchor = nil
 local speedBV = nil
 
 local function playSound(id, vol)
@@ -159,8 +165,8 @@ U.canvas.Parent = U.gui
 
 U.frame = Instance.new("Frame")
 U.frame.Name = "Main"
-U.frame.Size = UDim2.fromOffset(460, 380)
-U.frame.Position = UDim2.new(0.5, -230, 0.5, -190)
+U.frame.Size = UDim2.fromOffset(FRAME_W, FRAME_H)
+U.frame.Position = UDim2.new(0.5, -FRAME_W/2, 0.5, -FRAME_H/2)
 U.frame.BackgroundColor3 = Color3.fromRGB(22, 23, 28)
 U.frame.BorderSizePixel = 0
 U.frame.Active = true
@@ -282,7 +288,7 @@ end
 
 U.sidebar = Instance.new("ScrollingFrame")
 U.sidebar.Name = "Sidebar"
-U.sidebar.Size = UDim2.new(0, 100, 1, -66)
+U.sidebar.Size = UDim2.new(0, SIDEBAR_W, 1, -66)
 U.sidebar.Position = UDim2.fromOffset(10, 55)
 U.sidebar.BackgroundTransparency = 1
 U.sidebar.BorderSizePixel = 0
@@ -300,8 +306,8 @@ end
 
 U.rightArea = Instance.new("Frame")
 U.rightArea.Name = "RightArea"
-U.rightArea.Size = UDim2.new(1, -128, 1, -66)
-U.rightArea.Position = UDim2.fromOffset(118, 55)
+U.rightArea.Size = UDim2.new(1, -(SIDEBAR_W + 28), 1, -66)
+U.rightArea.Position = UDim2.fromOffset(SIDEBAR_W + 18, 55)
 U.rightArea.BackgroundTransparency = 1
 U.rightArea.Parent = U.frame
 
@@ -325,7 +331,6 @@ end
 
 U.tabFrames = {}
 U.tabs = {}
--- IMPORTANT: Config first (fast access), then visual/movement, then role-specific, then settings
 local tabNames = {"Config", "ESP", "Movement", "Utility", "Teleport", "Murderer", "Sheriff", "Notifier", "Keybinds", "Settings"}
 
 for _, tabName in ipairs(tabNames) do
@@ -383,7 +388,7 @@ for _, tabName in ipairs(tabNames) do
     tb.BorderSizePixel = 0
     tb.Text = tabName
     tb.TextColor3 = Color3.fromRGB(200, 200, 210)
-    tb.TextSize = 11
+    tb.TextSize = IS_MOBILE and 10 or 11
     tb.Font = Enum.Font.GothamSemibold
     tb.AutoButtonColor = false
     tb.TextXAlignment = Enum.TextXAlignment.Left
@@ -514,7 +519,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- CONFIG TAB (TOP — fast access)
+-- CONFIG TAB
 -- ============================================================
 currentParent = U.tabFrames.Config
 createSectionTitle("QUICK TOGGLES")
@@ -551,6 +556,7 @@ U.autoFarmBtn.MouseButton1Click:Connect(function()
         S.recentCoins = {}
         S.currentFarmCoin = nil
         if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
+        if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
         sendNotification("MM2 Menu", "Auto Farm OFF")
     end
 end)
@@ -621,7 +627,7 @@ createSectionTitle("AUTO FARM INFO")
 local afInfo = Instance.new("TextLabel")
 afInfo.Size = UDim2.new(1, 0, 0, 140)
 afInfo.BackgroundTransparency = 1
-afInfo.Text = "Auto Farm teleports to coins and forces Anti AFK on.\nWhen your bag hits 40 coins it does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab gun & shoot, else safe spot\n\nIf murderer gets within 8 studs, instantly hides under map\nuntil they leave.\n\nTeleports paced at ~1.5/sec to avoid anti-cheat kicks."
+afInfo.Text = "Auto Farm glides you under the map at safe altitude,\nsmoothly flying from coin to coin — no teleports, no kicks.\nWhen your bag hits 40 coins it does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab gun & shoot, else hide\n\nIf murderer gets within 8 studs, instantly hides under\nmap until they leave."
 afInfo.TextColor3 = Color3.fromRGB(150, 153, 165)
 afInfo.TextSize = 11
 afInfo.Font = Enum.Font.Gotham
@@ -669,14 +675,38 @@ makeEspBtn("Innocent")
 
 createSectionTitle("SELF ESP")
 
-U.selfRainbowBtn, U.selfRainbowInd = createToggle("RainbowSelfESP", "Rainbow")
+U.selfRainbowBtn, U.selfRainbowInd = createToggle("SelfESP", "Self ESP (Rainbow)")
 U.selfRainbowBtn.MouseButton1Click:Connect(function()
     S.rainbowSelfESP = not S.rainbowSelfESP
     if S.rainbowSelfESP then
         U.selfRainbowBtn.BackgroundColor3 = Color3.fromRGB(60, 45, 70)
         U.selfRainbowInd.BackgroundColor3 = Color3.fromRGB(210, 110, 255)
+        if not U.selfRainbowBtn:FindFirstChild("RainbowGradient") then
+            local g = Instance.new("UIGradient")
+            g.Name = "RainbowGradient"
+            g.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 90, 90)),
+                ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 220, 90)),
+                ColorSequenceKeypoint.new(0.4, Color3.fromRGB(90, 255, 120)),
+                ColorSequenceKeypoint.new(0.6, Color3.fromRGB(90, 200, 255)),
+                ColorSequenceKeypoint.new(0.8, Color3.fromRGB(210, 110, 255)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 90, 90)),
+            })
+            g.Parent = U.selfRainbowBtn
+        end
+        local c = player.Character
+        if c and not c:FindFirstChild("SelfRainbowESP") then
+            local h = Instance.new("Highlight")
+            h.Name = "SelfRainbowESP"
+            h.FillTransparency = 0.4
+            h.OutlineTransparency = 0
+            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            h.Parent = c
+        end
     else
         setOff(U.selfRainbowBtn, U.selfRainbowInd)
+        local g = U.selfRainbowBtn:FindFirstChild("RainbowGradient")
+        if g then g:Destroy() end
         local c = player.Character
         if c then
             local h = c:FindFirstChild("SelfRainbowESP")
@@ -989,15 +1019,25 @@ RunService.RenderStepped:Connect(function()
     local c = player.Character
     if not c then stopFly() return end
     local r = c:FindFirstChild("HumanoidRootPart")
+    local hum = c:FindFirstChildOfClass("Humanoid")
     local cam = workspace.CurrentCamera
-    if not r or not cam then return end
+    if not r or not cam or not hum then return end
     local dir = Vector3.zero
-    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.Space) or flyUpFlag == 1 then dir = dir + Vector3.new(0, 1, 0) end
-    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or flyDownFlag == -1 then dir = dir - Vector3.new(0, 1, 0) end
+    if UserInputService.KeyboardEnabled then
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) or flyUpFlag == 1 then dir = dir + Vector3.new(0, 1, 0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or flyDownFlag == -1 then dir = dir - Vector3.new(0, 1, 0) end
+    end
+    if dir.Magnitude < 0.1 then
+        local move = hum.MoveDirection
+        if move.Magnitude > 0.1 then
+            local flat = Vector3.new(move.X, 0, move.Z)
+            dir = cam.CFrame.LookVector * flat.Z + cam.CFrame.RightVector * flat.X
+        end
+    end
     if dir.Magnitude > 0 then
         flyBV.Velocity = dir.Unit * S.flySpeed
     else
@@ -1380,8 +1420,8 @@ local function getSafeUnderMapY()
         end
     end
     if lowest == math.huge or lowest < -200 then lowest = 0 end
-    local candidate = lowest - 15
-    local minSafe = S.VOID_Y_THRESHOLD + 15
+    local candidate = lowest - 6
+    local minSafe = S.VOID_Y_THRESHOLD + 12
     if candidate < minSafe then candidate = minSafe end
     return candidate
 end
@@ -1561,36 +1601,52 @@ local function attackTarget(t)
     end
 end
 
+-- ⬇⬇⬇ SWAPPED killAllPlayers (from MM2MENU.lua) ⬇⬇⬇
 local function killAllPlayers()
     local c = player.Character
     if not c then return end
     local mr = c:FindFirstChild("HumanoidRootPart")
     if not mr then return end
-    local k = c:FindFirstChild("Knife")
-    if not k then
-        local bp = player:FindFirstChild("Backpack")
-        if bp then
-            local bk = bp:FindFirstChild("Knife")
-            if bk then bk.Parent = c k = bk end
-        end
-    end
+    local k = getKnife()
     if not k then sendNotification("MM2 Menu", "No knife equipped!", SOUNDS.alert) return end
 
-    for pass = 1, 4 do
+    local function getTargets()
+        local list = {}
         for _, t in ipairs(Players:GetPlayers()) do
             if t ~= player and t.Character and not isPlayerInSpawn(t) then
                 local h = t.Character:FindFirstChildOfClass("Humanoid")
                 local tr = t.Character:FindFirstChild("HumanoidRootPart")
-                if h and h.Health > 0 and tr and tr.Parent then
-                    mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
-                    task.wait(0.03)
-                    pcall(function() k:Activate() end)
-                end
+                if h and h.Health > 0 and tr then table.insert(list, tr) end
             end
         end
-        task.wait(0.12)
+        return list
+    end
+
+    for _, tr in ipairs(getTargets()) do
+        if tr and tr.Parent then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.03)
+            pcall(function() k:Activate() end)
+        end
+    end
+    task.wait(0.15)
+    for _, tr in ipairs(getTargets()) do
+        if tr and tr.Parent then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.03)
+            pcall(function() k:Activate() end)
+        end
+    end
+    task.wait(0.15)
+    for _, tr in ipairs(getTargets()) do
+        if tr and tr.Parent then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.03)
+            pcall(function() k:Activate() end)
+        end
     end
 end
+-- ⬆⬆⬆ END SWAPPED killAllPlayers ⬆⬆⬆
 
 U.killAllBtn = createActionButton("KillAllNow", "Kill All Now")
 U.killAllBtn.MouseButton1Click:Connect(killAllPlayers)
@@ -1626,6 +1682,12 @@ U.killSoundBtn, U.killSoundInd = createToggle("KillSound", "Kill Sound")
 U.killSoundBtn.MouseButton1Click:Connect(function()
     S.killSoundOn = not S.killSoundOn
     if S.killSoundOn then setOn(U.killSoundBtn, U.killSoundInd) else setOff(U.killSoundBtn, U.killSoundInd) end
+end)
+
+U.sheriffHitSoundBtn, U.sheriffHitSoundInd = createToggle("SheriffHitSound", "Sheriff Hit Sound")
+U.sheriffHitSoundBtn.MouseButton1Click:Connect(function()
+    S.sheriffHitSoundOn = not S.sheriffHitSoundOn
+    if S.sheriffHitSoundOn then setOn(U.sheriffHitSoundBtn, U.sheriffHitSoundInd) else setOff(U.sheriffHitSoundBtn, U.sheriffHitSoundInd) end
 end)
 
 -- ============================================================
@@ -1671,15 +1733,15 @@ local function shootMurderer()
     end
 
     local killed = false
-    for attempt = 1, 4 do
+    for attempt = 1, 6 do
         local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
         myRoot = c:FindFirstChild("HumanoidRootPart")
         if not targetRoot or not myRoot then break end
 
         local targetPos = targetRoot.Position
-        local standPos = targetPos + (targetRoot.CFrame.LookVector * 3) + Vector3.new(0, 2, 0)
+        local standPos = targetPos + (targetRoot.CFrame.LookVector * 2) + Vector3.new(0, 1, 0)
         myRoot.CFrame = CFrame.new(standPos, targetPos)
-        task.wait(0.08)
+        task.wait(0.05)
 
         local fired = false
         for _, name in ipairs({"Shoot", "Fire", "FireGun", "ShootGun", "ClientShoot"}) do
@@ -1703,7 +1765,7 @@ local function shootMurderer()
 
         pcall(function() gun:Activate() end)
 
-        task.wait(0.25)
+        task.wait(0.15)
 
         local h = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
         if not h or h.Health <= 0 then killed = true break end
@@ -2049,7 +2111,7 @@ U.hopBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ============================================================
--- resetAllToggles (defined after all UI exists)
+-- resetAllToggles
 -- ============================================================
 local function resetAllToggles(silent)
     if S.noclip then
@@ -2080,6 +2142,8 @@ local function resetAllToggles(silent)
     if S.rainbowSelfESP then
         S.rainbowSelfESP = false
         setOff(U.selfRainbowBtn, U.selfRainbowInd)
+        local g = U.selfRainbowBtn:FindFirstChild("RainbowGradient")
+        if g then g:Destroy() end
         local c = player.Character
         if c then
             local h = c:FindFirstChild("SelfRainbowESP")
@@ -2136,6 +2200,7 @@ local function resetAllToggles(silent)
     if S.sheriffTrailOn then S.sheriffTrailOn = false setOff(U.sheriffTrailBtn, U.sheriffTrailInd) end
     if S.heroTrailOn then S.heroTrailOn = false setOff(U.heroTrailBtn, U.heroTrailInd) end
     if S.killSoundOn then S.killSoundOn = false setOff(U.killSoundBtn, U.killSoundInd) end
+    if S.sheriffHitSoundOn then S.sheriffHitSoundOn = false setOff(U.sheriffHitSoundBtn, U.sheriffHitSoundInd) end
     if S.autoFarmOn then
         S.autoFarmOn = false
         setOff(U.autoFarmBtn, U.autoFarmInd)
@@ -2148,6 +2213,7 @@ local function resetAllToggles(silent)
         S.lastFarmTP = 0
         S.lastFleeTP = 0
         if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
+        if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
     end
     if S.notifyRoundStart then S.notifyRoundStart = false setOff(U.rStartBtn, U.rStartInd) end
     if S.notifyRoundEnd then S.notifyRoundEnd = false setOff(U.rEndBtn, U.rEndInd) end
@@ -2258,9 +2324,11 @@ local function goToSafeSpot()
     if not c then return end
     local hrp = c:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
+    local safeY = getSafeUnderMapY()
     if not S.safeSpot then
-        local y = getMapY()
-        S.safeSpot = Vector3.new(hrp.Position.X, y + 500, hrp.Position.Z)
+        S.safeSpot = Vector3.new(hrp.Position.X, safeY, hrp.Position.Z)
+    else
+        S.safeSpot = Vector3.new(S.safeSpot.X, safeY, S.safeSpot.Z)
     end
     hrp.CFrame = CFrame.new(S.safeSpot)
     hrp.Velocity = Vector3.zero
@@ -2286,6 +2354,8 @@ local function tryGrabDroppedGun()
 end
 
 local function runPostBagAction()
+    if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
+
     if not isBagFull() then
         S.postBagActionDone = false
         return
@@ -2336,16 +2406,23 @@ local function runPostBagAction()
     end
 end
 
--- Anti-kick auto farm:
---   1. Wait for the coin we already touched to despawn (natural pacing)
---   2. Enforce 0.6s hard floor between teleports
---   3. Small random jitter so identical teleports don't repeat
---   4. Skip coins that are within 30 studs XZ of the murderer
+local function getOrCreateFarmAnchor(hrp)
+    if farmAnchor and farmAnchor.Parent == hrp then
+        return farmAnchor
+    end
+    if farmAnchor then farmAnchor:Destroy() end
+    farmAnchor = Instance.new("BodyPosition")
+    farmAnchor.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+    farmAnchor.P = 22
+    farmAnchor.D = 20
+    farmAnchor.Position = hrp.Position
+    farmAnchor.Parent = hrp
+    return farmAnchor
+end
+
 local function autoFarmCoins()
     if not S.autoFarmOn then return end
     if tick() < S.fleeUntil then return end
-    -- Don't collide with the flee teleport that just happened
-    if tick() - S.lastFleeTP < 0.5 then return end
 
     local c = player.Character
     if not c then return end
@@ -2359,6 +2436,8 @@ local function autoFarmCoins()
             S.autoFarmBagFullNotified = true
             sendNotification("Auto Farm", "Bag full — running role action", SOUNDS.notify)
         end
+        if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
+        S.currentFarmCoin = nil
         runPostBagAction()
         return
     end
@@ -2368,70 +2447,47 @@ local function autoFarmCoins()
     local container = getCoinContainer()
     if not container then return end
 
-    if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
+    local safeY = getSafeUnderMapY()
 
-    -- Wait for last coin to despawn before touching the next (this is the pacing)
-    if S.currentFarmCoin then
-        if S.currentFarmCoin.Parent and (tick() - S.currentFarmTAt) < 2.5 then
-            return
-        end
+    if not S.currentFarmCoin or not S.currentFarmCoin.Parent then
         S.currentFarmCoin = nil
-    end
 
-    -- Hard floor between teleports
-    if tick() - S.lastFarmTP < S.FARM_TP_INTERVAL then return end
-
-    -- Clean stale entries
-    for coin, _ in pairs(S.recentCoins) do
-        if not coin or not coin.Parent then S.recentCoins[coin] = nil end
-    end
-
-    -- Murderer XZ for coin filtering
-    local mXZ = nil
-    if MurdererName and MurdererName ~= player.Name then
-        local m = Players:FindFirstChild(MurdererName)
-        if m and m.Character then
-            local mr = m.Character:FindFirstChild("HumanoidRootPart")
-            if mr then mXZ = Vector2.new(mr.Position.X, mr.Position.Z) end
+        local mXZ = nil
+        if MurdererName and MurdererName ~= player.Name then
+            local m = Players:FindFirstChild(MurdererName)
+            if m and m.Character then
+                local mr = m.Character:FindFirstChild("HumanoidRootPart")
+                if mr then mXZ = Vector2.new(mr.Position.X, mr.Position.Z) end
+            end
         end
-    end
 
-    local nearest = nil
-    local nearestDist = math.huge
-    for _, coin in ipairs(container:GetChildren()) do
-        if coin:IsA("BasePart") and coin.Parent and not S.recentCoins[coin] then
-            local coinXZ = Vector2.new(coin.Position.X, coin.Position.Z)
-            local safeFromM = true
-            if mXZ and (coinXZ - mXZ).Magnitude < 30 then safeFromM = false end
-            if safeFromM then
-                local dist = (coin.Position - hrp.Position).Magnitude
-                if dist < nearestDist then
-                    nearestDist = dist
-                    nearest = coin
+        local nearest, nearestDist = nil, math.huge
+        for _, coin in ipairs(container:GetChildren()) do
+            if coin:IsA("BasePart") and coin.Parent then
+                local coinXZ = Vector2.new(coin.Position.X, coin.Position.Z)
+                if not mXZ or (coinXZ - mXZ).Magnitude >= 30 then
+                    local dist = (coin.Position - hrp.Position).Magnitude
+                    if dist < nearestDist then
+                        nearestDist = dist
+                        nearest = coin
+                    end
                 end
             end
         end
+        S.currentFarmCoin = nearest
     end
 
-    if not nearest then return end
+    local coin = S.currentFarmCoin
+    if not coin or not coin.Parent then return end
 
-    local now = tick()
-    S.recentCoins[nearest] = now
-    S.lastFarmTP = now
-    S.currentFarmCoin = nearest
-    S.currentFarmTAt = now
-
-    -- Small random jitter so every teleport has slightly different coords
-    local jitter = Vector3.new((math.random() - 0.5) * 2, 0, (math.random() - 0.5) * 2)
-    hrp.CFrame = CFrame.new(nearest.Position + Vector3.new(0, 2, 0) + jitter)
-    hrp.Velocity = Vector3.zero
-    hrp.AssemblyLinearVelocity = Vector3.zero
+    local anchor = getOrCreateFarmAnchor(hrp)
+    anchor.Position = Vector3.new(coin.Position.X, safeY, coin.Position.Z)
 end
 
--- Flee check — heartbeat reacts within one frame to murderer getting close
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.autoFarmOn then return end
+    if farmAnchor and farmAnchor.Parent then return end
 
     local c = player.Character
     if not c then return end
@@ -2449,24 +2505,13 @@ RunService.Heartbeat:Connect(function()
     local mrXZ = Vector2.new(mr.Position.X, mr.Position.Z)
     local distXZ = (hrpXZ - mrXZ).Magnitude
 
-    if S.fleeUntil > tick() and distXZ < S.FLEE_KEEP_DIST then
-        S.fleeUntil = math.max(S.fleeUntil, tick() + 0.5)
-    end
-
-    if distXZ <= S.FLEE_TRIGGER_DIST and tick() >= S.fleeUntil then
-        if tick() - S.lastFarmTP < 0.5 then return end
+    if distXZ <= S.FLEE_TRIGGER_DIST then
         if tick() - S.lastFleeTP < S.FLEE_TP_INTERVAL then return end
         S.lastFleeTP = tick()
-        S.fleeUntil = tick() + 1.5
+        S.fleeUntil = tick() + 2.0
         S.currentFarmCoin = nil
-        local awayDir = (hrpXZ - mrXZ)
-        if awayDir.Magnitude < 0.1 then awayDir = Vector2.new(1, 0) end
-        awayDir = awayDir.Unit
-        local safePos = hrp.Position + Vector3.new(awayDir.X * 50, 0, awayDir.Y * 50)
-        hrp.CFrame = CFrame.new(safePos)
-        hrp.Velocity = Vector3.zero
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        sendNotification("Auto Farm", "Murderer within " .. math.floor(distXZ) .. " studs — teleporting away!", SOUNDS.alert)
+        anchorUnderMap(hrp)
+        sendNotification("Auto Farm", "Murderer nearby — hiding under map", SOUNDS.alert)
     end
 end)
 
@@ -2765,9 +2810,14 @@ local function hookKillSound(t)
     local hum = t.Character:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     hum.Died:Connect(function()
-        if not S.killSoundOn then return end
-        if MurdererName ~= player.Name and SheriffName ~= player.Name then return end
-        playSound(SOUNDS.success, 1.5)
+        if S.killSoundOn then
+            if MurdererName == player.Name or SheriffName == player.Name then
+                playSound(SOUNDS.success, 1.5)
+            end
+        end
+        if S.sheriffHitSoundOn and SheriffName == player.Name and t.Name == MurdererName then
+            playSound(SOUNDS.success, 1.5)
+        end
     end)
 end
 
@@ -2807,14 +2857,6 @@ Players.PlayerRemoving:Connect(function(t)
     end
 end)
 
-local function isGunHeld(g)
-    for _, p in ipairs(Players:GetPlayers()) do
-        local c = p.Character
-        if c and g:IsDescendantOf(c) then return true end
-    end
-    return false
-end
-
 local function isDroppedGun(i)
     if not i or not i.Parent then return false end
     if i.Name ~= "Gun" and i.Name ~= "GunDrop" then return false end
@@ -2824,10 +2866,7 @@ local function isDroppedGun(i)
         local bp = p:FindFirstChild("Backpack")
         if bp and i:IsDescendantOf(bp) then return false end
     end
-    local par = i.Parent
-    if par == workspace then return true end
-    if par and par.Parent == workspace and (par:IsA("Folder") or par:IsA("Model")) and (par.Name == "GunDrop" or par.Name == "Gun") then return true end
-    return false
+    return true
 end
 
 local function attachGun(g)
@@ -2980,7 +3019,6 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- Speedhack driver (BodyVelocity, WalkSpeed stays at 16)
 RunService.RenderStepped:Connect(function()
     if not S.speedhackEnabled then return end
     if S.flyEnabled then
@@ -3010,12 +3048,11 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Anti-Void (early trigger + velocity pre-emptive rescue)
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.antiVoidEnabled or S.antiVoidCooldown then return end
     if S.flyEnabled then return end
-    if gunTpAnchor and gunTpAnchor.Parent then return end
+    if (farmAnchor and farmAnchor.Parent) or (gunTpAnchor and gunTpAnchor.Parent) then return end
 
     local c = player.Character
     if not c then return end
@@ -3093,6 +3130,7 @@ player.CharacterAdded:Connect(function(character)
     S.lastFarmTP = 0
     S.lastFleeTP = 0
     if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
+    if farmAnchor then farmAnchor:Destroy() farmAnchor = nil end
     if speedBV then speedBV:Destroy() speedBV = nil end
     if S.noclip then
         task.wait(0.1)
@@ -3117,6 +3155,17 @@ player.CharacterAdded:Connect(function(character)
             speedBV.P = 4000
             speedBV.Velocity = Vector3.zero
             speedBV.Parent = r
+        end
+    end
+    if S.rainbowSelfESP then
+        local h2 = character:FindFirstChild("SelfRainbowESP")
+        if not h2 then
+            local hl = Instance.new("Highlight")
+            hl.Name = "SelfRainbowESP"
+            hl.FillTransparency = 0.4
+            hl.OutlineTransparency = 0
+            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.Parent = character
         end
     end
     updateHL()
@@ -3154,7 +3203,7 @@ UserInputService.InputChanged:Connect(function(i)
     if not S.resizing then return end
     if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
         local d = i.Position - resizeStart
-        U.frame.Size = UDim2.fromOffset(math.max(380, resizeStartSize.X + d.X), math.max(280, resizeStartSize.Y + d.Y))
+        U.frame.Size = UDim2.fromOffset(math.max(300, resizeStartSize.X + d.X), math.max(240, resizeStartSize.Y + d.Y))
     end
 end)
 
@@ -3229,7 +3278,7 @@ U.lock.MouseButton1Click:Connect(function()
 end)
 U.minimize.MouseButton1Click:Connect(function()
     minimizeMenu()
-    sendNotification("MM2 Menu", "Menu minimized. Click 'MM2' or press Right Shift to reopen.")
+    sendNotification("MM2 Menu", "Menu minimized. Click 'MM2' or press RightShift to reopen.")
 end)
 U.close.MouseButton1Click:Connect(closeScript)
 U.close.MouseEnter:Connect(function() U.close.BackgroundColor3 = Color3.fromRGB(180, 55, 55) end)
@@ -3372,7 +3421,7 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 -- ============================================================
--- RAINBOW ANIMATION (+ Self ESP colour)
+-- RAINBOW ANIMATION
 -- ============================================================
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
@@ -3387,7 +3436,12 @@ RunService.Heartbeat:Connect(function()
         U.crosshairV.BackgroundColor3 = color
         U.crosshairDot.BackgroundColor3 = Color3.fromHSV((hue + 0.5) % 1, 1, 1)
     end
-    -- Self Rainbow ESP
+    if S.rainbowSelfESP and U.selfRainbowBtn then
+        local g = U.selfRainbowBtn:FindFirstChild("RainbowGradient")
+        if g then
+            g.Offset = Vector2.new(hue, 0)
+        end
+    end
     if S.rainbowSelfESP then
         local c = player.Character
         if c then
@@ -3407,14 +3461,14 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ============================================================
--- AUTO FARM LOOP (0.2s tick — pacing enforced inside)
+-- AUTO FARM LOOP
 -- ============================================================
 task.spawn(function()
     while U.gui and U.gui.Parent and not S.scriptClosed do
         if S.autoFarmOn then
             pcall(autoFarmCoins)
         end
-        task.wait(0.2)
+        task.wait(0.15)
     end
 end)
 
