@@ -1,4 +1,4 @@
---// MM2 MENU BY ARBUZ v1.9 (ALPHA)
+--// MM2 MENU BY ARBUZ v1.9.1 (ALPHA - FIXED)
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,11 +8,15 @@ local StarterGui = game:GetService("StarterGui")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
-local ScriptContext = game:GetService("ScriptContext")
 local VirtualUser = game:GetService("VirtualUser")
+
+-- Optional services (wrap in pcall to be safe across executors)
+local ScriptContext
+pcall(function() ScriptContext = game:GetService("ScriptContext") end)
 
 -- Suppress anti-cheat error traces
 pcall(function()
+    if not ScriptContext then return end
     for _, v in pairs(getconnections(ScriptContext.Error)) do
         pcall(function() v:Disable() end)
     end
@@ -73,7 +77,7 @@ local S = {
     safeSpot = nil, BAG_FULL_THRESHOLD = 40,
     recentCoins = {}, fleeUntil = 0,
     FLEE_TRIGGER_DIST = 15, FLEE_KEEP_DIST = 30,
-    currentFarmCoin = nil, lastFarmTP = 0,
+    currentFarmCoin = nil, lastFarmTP = 0, lastFleeTP = 0,
     FARM_TP_INTERVAL = 0.6, FLEE_TP_INTERVAL = 1.2, FARM_FLIGHT_SPEED = 30,
     farmAnchor = nil, farmAnchorAtt = nil, farmGyro = nil, farmVelocity = nil,
     fleeAnchor = nil,
@@ -87,13 +91,13 @@ local S = {
     jumpPowerOn = false, jumpPowerValue = 50,
     fpsCounterOn = false, fpsFrames = 0, fpsTick = 0, fpsLastValue = 0,
     customEmoteTrack = nil,
-    -- v1.9 additions
     silentAimOn = false,
     gunAccuracy = 25,
     xrayOn = false,
     godmodeOn = false,
     whitelist = {},
     whitelistOpen = false,
+    blockOtherGuis = true,
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
         infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
@@ -141,34 +145,73 @@ local gunTpAnchor = nil
 local speedBV = nil
 
 -- ============================================================
--- NEW: SILENT AIM (ShootGun hook)
+-- PLAYER GUI PROTECTION (block other GUIs)
+-- ============================================================
+local PROTECTED_GUI_NAMES = {
+    ["MM2MenuByArbuz"] = true,
+    ["MM2VectorPanel"] = true,
+    ["MM2Crosshair"] = true,
+    ["MM2FpsCounter"] = true,
+    ["MainGUI"] = true,
+    ["Chat"] = true,
+    ["RobloxGui"] = true,
+    ["BubbleChat"] = true,
+}
+
+local function installGuiBlocker()
+    if not S.blockOtherGuis then return end
+    playerGui.ChildAdded:Connect(function(child)
+        if not S.blockOtherGuis then return end
+        if not child:IsA("ScreenGui") then return end
+        if PROTECTED_GUI_NAMES[child.Name] then return end
+        task.defer(function()
+            task.wait(0.15)
+            if child and child.Parent and not PROTECTED_GUI_NAMES[child.Name] then
+                pcall(function() child:Destroy() end)
+            end
+        end)
+    end)
+end
+installGuiBlocker()
+
+-- ============================================================
+-- SILENT AIM (ShootGun hook) — SAFELY INSTALLED
 -- ============================================================
 local silentAimHookInstalled = false
 pcall(function()
-    if not hookmetamethod then return end
+    if type(hookmetamethod) ~= "function"
+        or type(checkcaller) ~= "function"
+        or type(getnamecallmethod) ~= "function" then
+        return
+    end
     local originalNamecall
     originalNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if not checkcaller() and method == "InvokeServer" and typeof(self) == "Instance" then
-            if (self.Name == "ShootGun" or self.Name == "Shoot") and S.silentAimOn and MurdererName then
-                local args = {...}
-                local target = Players:FindFirstChild(MurdererName)
-                if target and target.Character then
-                    local tRoot = target.Character:FindFirstChild("HumanoidRootPart")
-                    if tRoot then
-                        local vel = tRoot.AssemblyLinearVelocity
-                        local lead = Vector3.new(S.gunAccuracy / 200, 0, S.gunAccuracy / 200)
-                        local predictedPos = tRoot.Position + (vel * lead)
-                        -- args[1] is typically the origin CFrame/pos, args[2] is target pos
-                        if #args >= 2 then
-                            args[2] = predictedPos
-                        else
-                            args[1] = predictedPos
+        local ok, result = pcall(function()
+            local method = getnamecallmethod()
+            if not checkcaller() and method == "InvokeServer" and typeof(self) == "Instance" then
+                if (self.Name == "ShootGun" or self.Name == "Shoot") and S.silentAimOn and MurdererName then
+                    local args = {...}
+                    local target = Players:FindFirstChild(MurdererName)
+                    if target and target.Character then
+                        local tRoot = target.Character:FindFirstChild("HumanoidRootPart")
+                        if tRoot then
+                            local vel = tRoot.AssemblyLinearVelocity
+                            local lead = Vector3.new(S.gunAccuracy / 200, 0, S.gunAccuracy / 200)
+                            local predictedPos = tRoot.Position + (vel * lead)
+                            if #args >= 2 then
+                                args[2] = predictedPos
+                            else
+                                args[1] = predictedPos
+                            end
+                            return originalNamecall(self, table.unpack and table.unpack(args) or unpack(args))
                         end
-                        return originalNamecall(self, unpack(args))
                     end
                 end
             end
+            return nil
+        end)
+        if ok and result ~= nil then
+            return result
         end
         return originalNamecall(self, ...)
     end)
@@ -176,7 +219,24 @@ pcall(function()
 end)
 
 -- ============================================================
--- NEW: XRAY
+-- SOUND / NOTIFICATION HELPERS (moved BEFORE getAllEmotes)
+-- ============================================================
+local function playSound(id, vol)
+    local snd = Instance.new("Sound")
+    snd.SoundId = id or SOUNDS.notify
+    snd.Volume = vol or 1.2
+    snd.Parent = playerGui
+    snd:Play()
+    task.delay(4, function() if snd then snd:Destroy() end end)
+end
+
+local function sendNotification(title, text, soundId)
+    pcall(function() StarterGui:SetCore("SendNotification", {Title=title, Text=text, Duration=5}) end)
+    playSound(soundId or SOUNDS.notify, 1)
+end
+
+-- ============================================================
+-- XRAY
 -- ============================================================
 local function applyXray(on)
     pcall(function()
@@ -195,7 +255,7 @@ local function applyXray(on)
 end
 
 -- ============================================================
--- NEW: GODMODE
+-- GODMODE
 -- ============================================================
 local function activateGodmode()
     pcall(function()
@@ -233,7 +293,7 @@ local function activateGodmode()
 end
 
 -- ============================================================
--- NEW: FORCE RESPAWN
+-- FORCE RESPAWN
 -- ============================================================
 local function forceRespawn()
     pcall(function()
@@ -250,7 +310,7 @@ local function forceRespawn()
 end
 
 -- ============================================================
--- NEW: GET ALL EMOTES
+-- GET ALL EMOTES
 -- ============================================================
 local function getAllEmotes()
     pcall(function()
@@ -268,20 +328,6 @@ local function getAllEmotes()
             sendNotification("MM2 Menu", "EmoteModule not found", SOUNDS.alert)
         end
     end)
-end
-
-local function playSound(id, vol)
-    local snd = Instance.new("Sound")
-    snd.SoundId = id or SOUNDS.notify
-    snd.Volume = vol or 1.2
-    snd.Parent = playerGui
-    snd:Play()
-    task.delay(4, function() if snd then snd:Destroy() end end)
-end
-
-local function sendNotification(title, text, soundId)
-    pcall(function() StarterGui:SetCore("SendNotification", {Title=title, Text=text, Duration=5}) end)
-    playSound(soundId or SOUNDS.notify, 1)
 end
 
 local function getLayoutOrder()
@@ -529,7 +575,7 @@ U.title = Instance.new("TextLabel")
 U.title.Size = UDim2.new(1, -120, 1, 0)
 U.title.Position = UDim2.fromOffset(10, 0)
 U.title.BackgroundTransparency = 1
-U.title.Text = "MM2 MENU BY ARBUZ v1.9"
+U.title.Text = "MM2 MENU BY ARBUZ v1.9.1"
 U.title.TextColor3 = Color3.fromRGB(255, 255, 255)
 U.title.TextSize = 13
 U.title.Font = Enum.Font.GothamBold
@@ -791,14 +837,17 @@ local function createActionButton(name, text)
 end
 
 local function setOn(b, i)
+    if not b or not i then return end
     b.BackgroundColor3 = Color3.fromRGB(35, 70, 45)
     i.BackgroundColor3 = Color3.fromRGB(50, 210, 90)
 end
 local function setOff(b, i)
+    if not b or not i then return end
     b.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
     i.BackgroundColor3 = Color3.fromRGB(80, 82, 90)
 end
 local function setRed(b, i)
+    if not b or not i then return end
     b.BackgroundColor3 = Color3.fromRGB(70, 32, 32)
     i.BackgroundColor3 = Color3.fromRGB(230, 55, 55)
 end
@@ -834,7 +883,7 @@ end
 
 refreshSpawnCache()
 task.spawn(function()
-    while U.gui.Parent do
+    while U.gui and U.gui.Parent do
         pcall(refreshSpawnCache)
         task.wait(10)
     end
@@ -1639,7 +1688,6 @@ end)
 
 createSectionTitle("WORLD")
 
--- NEW: Xray toggle
 U.xrayBtn, U.xrayInd = createToggle("Xray", "Xray (see through walls)")
 U.xrayBtn.MouseButton1Click:Connect(function()
     S.xrayOn = not S.xrayOn
@@ -1653,14 +1701,12 @@ U.xrayBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- NEW: Godmode button
 U.godBtn = createActionButton("Godmode", "Godmode (unstable)")
 U.godBtn.MouseButton1Click:Connect(function()
     activateGodmode()
     sendNotification("MM2 Menu", "Godmode applied", SOUNDS.success)
 end)
 
--- NEW: Force Respawn button
 U.forceRespawnBtn = createActionButton("ForceRespawn", "Force Respawn (kill self)")
 U.forceRespawnBtn.BackgroundColor3 = Color3.fromRGB(60, 40, 40)
 U.forceRespawnBtn.MouseButton1Click:Connect(forceRespawn)
@@ -2206,7 +2252,6 @@ U.autoShootBtn.MouseButton1Click:Connect(function()
     if S.autoShootMurdererOn then setOn(U.autoShootBtn, U.autoShootInd) else setOff(U.autoShootBtn, U.autoShootInd) end
 end)
 
--- NEW: Silent Aim toggle
 U.silentAimBtn, U.silentAimInd = createToggle("SilentAim", "Silent Aim (ShootGun hook)")
 U.silentAimBtn.MouseButton1Click:Connect(function()
     S.silentAimOn = not S.silentAimOn
@@ -2223,7 +2268,20 @@ U.silentAimBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- NEW: Gun Accuracy +/- row
+-- NEW: Aim Assist toggle
+U.aimAssistBtn, U.aimAssistInd = createToggle("AimAssist", "Aim Assist (Hold RMB)")
+U.aimAssistBtn.MouseButton1Click:Connect(function()
+    S.aimAssistOn = not S.aimAssistOn
+    if S.aimAssistOn then setOn(U.aimAssistBtn, U.aimAssistInd) else setOff(U.aimAssistBtn, U.aimAssistInd) end
+end)
+
+-- NEW: Aimbot toggle
+U.aimbotBtn, U.aimbotInd = createToggle("Aimbot", "Aimbot (Mouse Lock)")
+U.aimbotBtn.MouseButton1Click:Connect(function()
+    S.aimbotOn = not S.aimbotOn
+    if S.aimbotOn then setOn(U.aimbotBtn, U.aimbotInd) else setOff(U.aimbotBtn, U.aimbotInd) end
+end)
+
 U.accRow = Instance.new("Frame")
 U.accRow.Size = UDim2.new(1, 0, 0, 32)
 U.accRow.BackgroundTransparency = 1
@@ -2532,12 +2590,10 @@ U.fpsBoostBtn = createActionButton("FpsBoost", "FPS Boost (Removes Textures)")
 U.fpsBoostBtn.BackgroundColor3 = Color3.fromRGB(45, 55, 75)
 U.fpsBoostBtn.MouseButton1Click:Connect(fpsBoost)
 
--- NEW: Get All Emotes button
 U.emotesBtn = createActionButton("GetAllEmotes", "Get All Emotes (Premium)")
 U.emotesBtn.BackgroundColor3 = Color3.fromRGB(45, 70, 55)
 U.emotesBtn.MouseButton1Click:Connect(getAllEmotes)
 
--- NEW: Whitelist section
 createSectionTitle("WHITELIST")
 U.wlInfo = Instance.new("TextLabel")
 U.wlInfo.Size = UDim2.new(1, 0, 0, 18)
@@ -2597,6 +2653,15 @@ U.wlClear.BackgroundColor3 = Color3.fromRGB(60, 40, 40)
 U.wlClear.MouseButton1Click:Connect(function()
     S.whitelist = {}
     sendNotification("MM2 Menu", "Whitelist cleared", SOUNDS.notify)
+end)
+
+createSectionTitle("GUI BLOCKER")
+U.guiBlockerBtn, U.guiBlockerInd = createToggle("GuiBlocker", "Block Other GUIs")
+setOn(U.guiBlockerBtn, U.guiBlockerInd)
+U.guiBlockerBtn.MouseButton1Click:Connect(function()
+    S.blockOtherGuis = not S.blockOtherGuis
+    if S.blockOtherGuis then setOn(U.guiBlockerBtn, U.guiBlockerInd)
+    else setOff(U.guiBlockerBtn, U.guiBlockerInd) end
 end)
 
 createSectionTitle("EMOTES")
@@ -2669,7 +2734,7 @@ local function resetAllToggles(silent)
         for o, v in pairs(S.originalCollision) do if o and o.Parent then o.CanCollide = v end end
         S.originalCollision = {}
     end
-    if S.flyEnabled then stopFly() end
+    if S.flyEnabled then pcall(stopFly) end
     S.flyPanelOpen = false; FP.panel.Visible = false
     if S.infinityJump then S.infinityJump = false setOff(U.infBtn, U.infInd) end
     if S.flingThirdParty then S.flingThirdParty = false setOff(U.f3Btn, U.f3Ind) end
@@ -2804,7 +2869,7 @@ do
 end
 
 -- ============================================================
--- COIN FARM SYSTEM (unchanged from v1.8)
+-- COIN FARM SYSTEM
 -- ============================================================
 local function getCoinContainer()
     for _, model in ipairs(workspace:GetChildren()) do
@@ -3775,7 +3840,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 player.CharacterAdded:Connect(function(character)
-    stopFly()
+    pcall(stopFly)
     flyUpFlag = 0 flyDownFlag = 0
     S.originalCollision = {}
     S.lastSafePosition = nil; S.antiVoidCooldown = false
@@ -4103,4 +4168,4 @@ task.spawn(function()
     end
 end)
 
-sendNotification("MM2 Menu", "v1.9 loaded — X=stop anims, RShift=Vector, RCtrl=main", SOUNDS.success)
+sendNotification("MM2 Menu", "v1.9.1 loaded — X=stop anims, RShift=Vector, RCtrl=main", SOUNDS.success)
