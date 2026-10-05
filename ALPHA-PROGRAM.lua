@@ -10,6 +10,13 @@ local HttpService = game:GetService("HttpService")
 
 local RAINBOW_SPEED = 0.25
 
+local SOUNDS = {
+    notify = "rbxassetid://12221967",
+    alert = "rbxassetid://131961136",
+    success = "rbxassetid://5801257793",
+    round = "rbxassetid://130972023882",
+}
+
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
@@ -21,8 +28,9 @@ local S = {
     playerDistanceOn = false, playerDistBillboards = {},
     killerAlarmOn = false, killerAlarmCooldown = 0,
     roundTimerOn = false, roundTimerStart = 0, roundTimerLabel = nil,
-    spectateKiller = false, crosshairOn = false, crosshairGui = nil,
+    crosshairOn = false, crosshairGui = nil,
     keybindsEnabled = true, scriptClosed = false,
+    lastTouchPos = nil,
     gunDropAlert = false, lastGunDropped = false,
     notifyRoundStart = false, notifyRoundEnd = false, notifyPreRoundEnd = false, preRoundEndFired = false,
     playerJoinLeaveNotify = false,
@@ -30,7 +38,7 @@ local S = {
     killerTrailOn = false, sheriffTrailOn = false, heroTrailOn = false,
     cameraFollowMurderer = false,
     killSoundOn = false,
-    lastKnownMurderer = nil, lastKnownSheriff = nil, lastKnownHero = nil,
+    lastKnownMurderer = nil,
     flySpeed = 50, speedhackEnabled = false, speedhackSpeed = 45,
     guiLocked = false, flyPanelLocked = false, minimized = false, menuVisible = true,
     espEnabled = { Innocent = false, Murderer = false, Sheriff = false, Hero = false },
@@ -90,17 +98,18 @@ local lastAutoGunTP = 0
 local currentLayoutOrder = 0
 local currentParent = nil
 
-local function sendNotification(title, text)
-    pcall(function() StarterGui:SetCore("SendNotification", {Title=title, Text=text, Duration=5}) end)
-end
-
-local function playAlertSound(id, vol)
+local function playSound(id, vol)
     local snd = Instance.new("Sound")
-    snd.SoundId = id or "rbxassetid://131961136"
-    snd.Volume = vol or 1.5
+    snd.SoundId = id or SOUNDS.notify
+    snd.Volume = vol or 1.2
     snd.Parent = playerGui
     snd:Play()
     task.delay(4, function() if snd then snd:Destroy() end end)
+end
+
+local function sendNotification(title, text, soundId)
+    pcall(function() StarterGui:SetCore("SendNotification", {Title=title, Text=text, Duration=5}) end)
+    playSound(soundId or SOUNDS.notify, 1)
 end
 
 local function getLayoutOrder()
@@ -258,7 +267,6 @@ U.sidebar.BackgroundTransparency = 1
 U.sidebar.BorderSizePixel = 0
 U.sidebar.ScrollBarThickness = 3
 U.sidebar.ScrollBarImageColor3 = Color3.fromRGB(75, 77, 85)
-U.sidebar.CanvasSize = UDim2.new(0, 0, 0, 0)
 U.sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y
 U.sidebar.ScrollingDirection = Enum.ScrollingDirection.Y
 U.sidebar.Parent = U.frame
@@ -445,6 +453,10 @@ end
 local function setOff(b, i)
     b.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
     i.BackgroundColor3 = Color3.fromRGB(80, 82, 90)
+end
+local function setRed(b, i)
+    b.BackgroundColor3 = Color3.fromRGB(70, 32, 32)
+    i.BackgroundColor3 = Color3.fromRGB(230, 55, 55)
 end
 
 local function refreshSpawnCache()
@@ -1085,13 +1097,13 @@ end
 
 U.sendMurdererBtn = createActionButton("SendMurdererChat", "Send Murderer In Chat")
 U.sendMurdererBtn.MouseButton1Click:Connect(function()
-    if not MurdererName then sendNotification("MM2 Menu", "Murderer not found") return end
+    if not MurdererName then sendNotification("MM2 Menu", "Murderer not found", SOUNDS.alert) return end
     sendChat(getRoleMessage("Murderer", MurdererName))
 end)
 
 U.sendSheriffBtn = createActionButton("SendSheriffChat", "Send Sheriff In Chat")
 U.sendSheriffBtn.MouseButton1Click:Connect(function()
-    if not SheriffName then sendNotification("MM2 Menu", "Sheriff not found") return end
+    if not SheriffName then sendNotification("MM2 Menu", "Sheriff not found", SOUNDS.alert) return end
     sendChat(getRoleMessage("Sheriff", SheriffName))
 end)
 
@@ -1155,25 +1167,52 @@ local function attackTarget(t)
     end
 end
 
+-- FIXED killAllPlayers: skip spawn + 3 passes for reliability
 local function killAllPlayers()
     local c = player.Character
     if not c then return end
     local mr = c:FindFirstChild("HumanoidRootPart")
     if not mr then return end
     local k = getKnife()
-    if not k then sendNotification("MM2 Menu", "No knife equipped!") return end
-    local targets = {}
-    for _, t in ipairs(Players:GetPlayers()) do
-        if t ~= player and t.Character then
-            local h = t.Character:FindFirstChildOfClass("Humanoid")
-            local tr = t.Character:FindFirstChild("HumanoidRootPart")
-            if h and h.Health > 0 and tr then table.insert(targets, tr) end
+    if not k then sendNotification("MM2 Menu", "No knife equipped!", SOUNDS.alert) return end
+
+    local function getTargets()
+        local list = {}
+        for _, t in ipairs(Players:GetPlayers()) do
+            if t ~= player and t.Character and not isPlayerInSpawn(t) then
+                local h = t.Character:FindFirstChildOfClass("Humanoid")
+                local tr = t.Character:FindFirstChild("HumanoidRootPart")
+                if h and h.Health > 0 and tr then table.insert(list, tr) end
+            end
+        end
+        return list
+    end
+
+    -- Pass 1
+    for _, tr in ipairs(getTargets()) do
+        if tr and tr.Parent then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.03)
+            pcall(function() k:Activate() end)
         end
     end
-    for _, tr in ipairs(targets) do
-        mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
-        task.wait()
-        pcall(function() k:Activate() end)
+    -- Pass 2
+    task.wait(0.15)
+    for _, tr in ipairs(getTargets()) do
+        if tr and tr.Parent then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.03)
+            pcall(function() k:Activate() end)
+        end
+    end
+    -- Pass 3
+    task.wait(0.15)
+    for _, tr in ipairs(getTargets()) do
+        if tr and tr.Parent then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.03)
+            pcall(function() k:Activate() end)
+        end
     end
 end
 
@@ -1222,10 +1261,10 @@ local function getGun()
 end
 
 local function shootMurderer()
-    if not MurdererName then sendNotification("MM2 Menu", "Murderer not found yet!") return end
+    if not MurdererName then sendNotification("MM2 Menu", "Murderer not found yet!", SOUNDS.alert) return end
     local t = Players:FindFirstChild(MurdererName)
     if not t or not t.Character then return end
-    if isPlayerInSpawn(t) then sendNotification("MM2 Menu", "Murderer is in spawn/lobby!") return end
+    if isPlayerInSpawn(t) then sendNotification("MM2 Menu", "Murderer is in spawn/lobby!", SOUNDS.alert) return end
     local tr = t.Character:FindFirstChild("HumanoidRootPart")
     local mr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if tr and mr then
@@ -1240,7 +1279,7 @@ local function shootMurderer()
                 g:Activate()
             end
         else
-            sendNotification("MM2 Menu", "You do not have a Gun equipped!")
+            sendNotification("MM2 Menu", "You do not have a Gun equipped!", SOUNDS.alert)
         end
     end
 end
@@ -1439,7 +1478,7 @@ end)
 
 U.gunTpBtn = createActionButton("GunTeleport", "Teleport To Gun")
 U.gunTpBtn.MouseButton1Click:Connect(function()
-    if not tpGunAndBack() then sendNotification("MM2 Menu", "No dropped gun found on the map!") end
+    if not tpGunAndBack() then sendNotification("MM2 Menu", "No dropped gun found on the map!", SOUNDS.alert) end
 end)
 
 -- ============================================================
@@ -1452,7 +1491,11 @@ U.kbEnabledBtn, U.kbEnabledInd = createToggle("KeybindsEnabled", "All Keybinds E
 setOn(U.kbEnabledBtn, U.kbEnabledInd)
 U.kbEnabledBtn.MouseButton1Click:Connect(function()
     S.keybindsEnabled = not S.keybindsEnabled
-    if S.keybindsEnabled then setOn(U.kbEnabledBtn, U.kbEnabledInd) else setOff(U.kbEnabledBtn, U.kbEnabledInd) end
+    if S.keybindsEnabled then
+        setOn(U.kbEnabledBtn, U.kbEnabledInd)
+    else
+        setRed(U.kbEnabledBtn, U.kbEnabledInd)
+    end
 end)
 
 local kbInfo = Instance.new("TextLabel")
@@ -1666,12 +1709,6 @@ U.roundTimerBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-U.spectateBtn, U.spectateInd = createToggle("SpectateKiller", "Spectate Killer (when dead)")
-U.spectateBtn.MouseButton1Click:Connect(function()
-    S.spectateKiller = not S.spectateKiller
-    if S.spectateKiller then setOn(U.spectateBtn, U.spectateInd) else setOff(U.spectateBtn, U.spectateInd) end
-end)
-
 U.camFollowBtn, U.camFollowInd = createToggle("CameraFollowMurderer", "Camera Follow Murderer")
 U.camFollowBtn.MouseButton1Click:Connect(function()
     S.cameraFollowMurderer = not S.cameraFollowMurderer
@@ -1725,19 +1762,19 @@ end)
 U.hopBtn = createActionButton("ServerHop", "Server Hop")
 U.hopBtn.MouseButton1Click:Connect(function()
     sendNotification("MM2 Menu", "Finding new server...")
-    local ok, err = pcall(function()
+    local ok = pcall(function()
         local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
         local data = HttpService:JSONDecode(game:HttpGet(url))
         local servers = data.data
         if not servers or #servers == 0 then
-            sendNotification("MM2 Menu", "No other servers found")
+            sendNotification("MM2 Menu", "No other servers found", SOUNDS.alert)
             return
         end
         local pick = servers[math.random(1, #servers)]
         TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
     end)
     if not ok then
-        sendNotification("MM2 Menu", "Server hop failed")
+        sendNotification("MM2 Menu", "Server hop failed", SOUNDS.alert)
     end
 end)
 
@@ -1806,7 +1843,6 @@ local function resetAllToggles()
         setOff(U.roundTimerBtn, U.roundTimerInd)
         S.roundTimerLabel.Visible = false
     end
-    if S.spectateKiller then S.spectateKiller = false setOff(U.spectateBtn, U.spectateInd) end
     if S.cameraFollowMurderer then S.cameraFollowMurderer = false setOff(U.camFollowBtn, U.camFollowInd) end
     if S.crosshairOn then
         S.crosshairOn = false
@@ -1848,19 +1884,16 @@ S.crosshairGui.Parent = playerGui
 do
     U.crosshairH = Instance.new("Frame")
     U.crosshairH.Size = UDim2.fromOffset(20, 2)
-    U.crosshairH.Position = UDim2.new(0.5, -10, 0.5, -1)
     U.crosshairH.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     U.crosshairH.BorderSizePixel = 0
     U.crosshairH.Parent = S.crosshairGui
     U.crosshairV = Instance.new("Frame")
     U.crosshairV.Size = UDim2.fromOffset(2, 20)
-    U.crosshairV.Position = UDim2.new(0.5, -1, 0.5, -10)
     U.crosshairV.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     U.crosshairV.BorderSizePixel = 0
     U.crosshairV.Parent = S.crosshairGui
     U.crosshairDot = Instance.new("Frame")
     U.crosshairDot.Size = UDim2.fromOffset(3, 3)
-    U.crosshairDot.Position = UDim2.new(0.5, -1.5, 0.5, -1.5)
     U.crosshairDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     U.crosshairDot.BorderSizePixel = 0
     U.crosshairDot.Parent = S.crosshairGui
@@ -1945,6 +1978,7 @@ local function applyPvpPreset()
         setOn(U.crosshairBtn, U.crosshairInd)
         if S.crosshairGui then S.crosshairGui.Enabled = true end
     end
+    if not S.gunDropAlert then S.gunDropAlert = true setOn(U.gunAlertBtn, U.gunAlertInd) end
     sendNotification("MM2 Menu", "PVP Ready preset applied")
 end
 
@@ -1956,7 +1990,7 @@ createSectionTitle("PRESET INFO")
 local pInfo = Instance.new("TextLabel")
 pInfo.Size = UDim2.new(1, 0, 0, 140)
 pInfo.BackgroundTransparency = 1
-pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (50 studs)\n- Round Timer\n- Rainbow Crosshair"
+pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (50 studs)\n- Round Timer\n- Rainbow Crosshair\n- Gun Drop Alert"
 pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
 pInfo.TextSize = 11
 pInfo.Font = Enum.Font.Gotham
@@ -1999,24 +2033,21 @@ local function validHolder(n)
     return true
 end
 
--- Track last known murderer/sheriff/hero for round transitions
-local function roundStartAlert()
+local function roundEvents()
     if S.notifyRoundStart and MurdererName and MurdererName ~= S.lastKnownMurderer then
-        sendNotification("Round Started", "Murderer: " .. tostring(MurdererName))
-        playAlertSound("rbxassetid://130972023882", 1.5)
+        sendNotification("Round Started", "Murderer: " .. tostring(MurdererName), SOUNDS.round)
+    end
+    if S.notifyRoundEnd and not MurdererName and S.lastKnownMurderer then
+        sendNotification("Round Ended", "New round starting soon", SOUNDS.round)
     end
     S.lastKnownMurderer = MurdererName
-    if S.notifyRoundEnd and not MurdererName and S.lastKnownMurderer then
-        sendNotification("Round Ended", "New round starting soon")
-        playAlertSound("rbxassetid://130972023882", 1.5)
-    end
 end
 
 local function getRoles()
     if not GetPlayerData then
         if not warnedNoRemote then
             warnedNoRemote = true
-            sendNotification("MM2 Menu", "GetPlayerData remote not found - role features disabled")
+            sendNotification("MM2 Menu", "GetPlayerData remote not found - role features disabled", SOUNDS.alert)
         end
         return
     end
@@ -2090,7 +2121,7 @@ local function getRoles()
         noMurdererSince = nil
     end
 
-    roundStartAlert()
+    roundEvents()
 
     if S.autoNotifyRoles and MurdererName then
         local changed = MurdererName ~= lastNotifiedMurderer
@@ -2188,7 +2219,6 @@ local function updatePlayerDistance()
     end
 end
 
--- Trail attach/detach helpers
 local function attachTrail(target, color)
     if not target or not target.Character then return end
     local hrp = target.Character:FindFirstChild("HumanoidRootPart")
@@ -2263,7 +2293,7 @@ local function hookKillSound(t)
     hum.Died:Connect(function()
         if not S.killSoundOn then return end
         if MurdererName ~= player.Name then return end
-        playAlertSound("rbxassetid://5801257793", 1.5)
+        playSound(SOUNDS.success, 1.5)
     end)
 end
 
@@ -2383,6 +2413,7 @@ local function checkAutoChat()
 end
 
 RunService.Heartbeat:Connect(function()
+    if S.scriptClosed then return end
     if not S.killerAlarmOn or not MurdererName then return end
     local now = tick()
     if now - S.killerAlarmCooldown < 2 then return end
@@ -2397,12 +2428,12 @@ RunService.Heartbeat:Connect(function()
     local dist = (myRoot.Position - mRoot.Position).Magnitude
     if dist <= 50 then
         S.killerAlarmCooldown = now
-        sendNotification("⚠ MURDERER NEAR", "Murderer is " .. math.floor(dist) .. " studs away!")
-        playAlertSound("rbxassetid://131961136", 2)
+        sendNotification("⚠ MURDERER NEAR", "Murderer is " .. math.floor(dist) .. " studs away!", SOUNDS.alert)
     end
 end)
 
 RunService.Heartbeat:Connect(function()
+    if S.scriptClosed then return end
     if not S.roundTimerOn or not S.roundTimerLabel then return end
     local elapsed = tick() - S.roundTimerStart
     local remaining = math.max(0, ROUND_TIME - elapsed)
@@ -2411,8 +2442,7 @@ RunService.Heartbeat:Connect(function()
     S.roundTimerLabel.Text = string.format("%d:%02d", m, s)
     if S.notifyPreRoundEnd and not S.preRoundEndFired and remaining <= 10 and remaining > 0 then
         S.preRoundEndFired = true
-        sendNotification("Round Ending", "Round ends in 10 seconds")
-        playAlertSound("rbxassetid://130972023882", 1.5)
+        sendNotification("Round Ending", "Round ends in 10 seconds", SOUNDS.alert)
     end
     if remaining <= 0 then
         S.roundTimerStart = tick()
@@ -2421,17 +2451,18 @@ RunService.Heartbeat:Connect(function()
 end)
 
 RunService.Heartbeat:Connect(function()
+    if S.scriptClosed then return end
     if not S.gunDropAlert then return end
     local gd = workspace:FindFirstChild("GunDrop", true)
     local isDropped = gd ~= nil
     if isDropped and not S.lastGunDropped then
-        sendNotification("Gun Dropped", "A gun has appeared on the map!")
-        playAlertSound("rbxassetid://131961136", 1.5)
+        sendNotification("Gun Dropped", "A gun has appeared on the map!", SOUNDS.alert)
     end
     S.lastGunDropped = isDropped
 end)
 
 RunService.RenderStepped:Connect(function()
+    if S.scriptClosed then return end
     if S.cameraFollowMurderer and MurdererName then
         local m = Players:FindFirstChild(MurdererName)
         if m and m.Character then
@@ -2442,27 +2473,35 @@ RunService.RenderStepped:Connect(function()
             end
         end
     end
-    if S.spectateKiller and MurdererName then
-        local me = player.Character
-        local dead = true
-        if me then
-            local h = me:FindFirstChildOfClass("Humanoid")
-            if h and h.Health > 0 then dead = false end
+    if S.crosshairOn then
+        local cx, cy
+        if UserInputService.TouchEnabled and S.lastTouchPos then
+            cx = S.lastTouchPos.X
+            cy = S.lastTouchPos.Y
+        else
+            local vp = workspace.CurrentCamera.ViewportSize
+            cx = vp.X / 2
+            cy = vp.Y / 2
         end
-        if dead then
-            local m = Players:FindFirstChild(MurdererName)
-            if m and m.Character then
-                local mRoot = m.Character:FindFirstChild("HumanoidRootPart")
-                if mRoot then
-                    local cam = workspace.CurrentCamera
-                    cam.CFrame = CFrame.new(mRoot.Position + Vector3.new(0, 10, 15), mRoot.Position)
-                end
-            end
-        end
+        U.crosshairH.Position = UDim2.fromOffset(cx - 10, cy - 1)
+        U.crosshairV.Position = UDim2.fromOffset(cx - 1, cy - 10)
+        U.crosshairDot.Position = UDim2.fromOffset(cx - 1.5, cy - 1.5)
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch then
+        S.lastTouchPos = i.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch then
+        S.lastTouchPos = i.Position
     end
 end)
 
 RunService.Stepped:Connect(function()
+    if S.scriptClosed then return end
     if not S.noclip or not player.Character then return end
     for _, o in ipairs(player.Character:GetDescendants()) do
         if o:IsA("BasePart") then o.CanCollide = false end
@@ -2470,6 +2509,7 @@ RunService.Stepped:Connect(function()
 end)
 
 RunService.Heartbeat:Connect(function()
+    if S.scriptClosed then return end
     if not S.antiVoidEnabled or S.antiVoidCooldown then return end
     if S.flyEnabled then return end
     local c = player.Character
@@ -2488,6 +2528,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 RunService.Heartbeat:Connect(function()
+    if S.scriptClosed then return end
     if not S.antiFlingEnabled then return end
     if S.flyEnabled then return end
     local c = player.Character
