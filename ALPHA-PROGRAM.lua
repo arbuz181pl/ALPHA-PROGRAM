@@ -1,4 +1,4 @@
---// MM2 MENU BY ARBUZ v1.4 (ALPHA)
+--// MM2 MENU BY ARBUZ v1.5 (ALPHA)
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -67,15 +67,20 @@ local S = {
     lastBagFullNotified = 0,
     safeSpot = nil,
     BAG_FULL_THRESHOLD = 40,
+    recentCoins = {},
+    fleeUntil = 0,
+    FLEE_TRIGGER_DIST = 15,
+    FLEE_KEEP_DIST = 30,
     currentFarmCoin = nil,
     lastFarmTP = 0,
     FARM_TP_INTERVAL = 0.6,
-    FLEE_DURATION = 2.5,
-    FLEE_TRIGGER_DIST = 15,
-    FLEE_KEEP_DIST = 30,
-    fleeUntil = 0,
-    farmAnchor = nil,
-    fleeAnchor = nil,
+    FLEE_TP_INTERVAL = 1.2,
+    FARM_FLIGHT_SPEED = 55,
+    -- Fly anchor components for farm
+    farmAnchor = nil, -- BodyPosition
+    farmGyro = nil, -- BodyGyro
+    farmVelocity = nil, -- BodyVelocity
+    fleeAnchor = nil, -- BodyPosition for flee
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
         infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
@@ -187,7 +192,7 @@ U.title = Instance.new("TextLabel")
 U.title.Size = UDim2.new(1, -120, 1, 0)
 U.title.Position = UDim2.fromOffset(10, 0)
 U.title.BackgroundTransparency = 1
-U.title.Text = "MM2 MENU BY ARBUZ v1.4"
+U.title.Text = "MM2 MENU BY ARBUZ v1.5"
 U.title.TextColor3 = Color3.fromRGB(255, 255, 255)
 U.title.TextSize = 13
 U.title.Font = Enum.Font.GothamBold
@@ -550,9 +555,11 @@ U.autoFarmBtn.MouseButton1Click:Connect(function()
         S.fleeUntil = 0
         S.recentCoins = {}
         S.currentFarmCoin = nil
-        if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
         if S.farmAnchor then S.farmAnchor:Destroy() S.farmAnchor = nil end
+        if S.farmGyro then S.farmGyro:Destroy() S.farmGyro = nil end
+        if S.farmVelocity then S.farmVelocity:Destroy() S.farmVelocity = nil end
         if S.fleeAnchor then S.fleeAnchor:Destroy() S.fleeAnchor = nil end
+        if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
         sendNotification("MM2 Menu", "Auto Farm OFF")
     end
 end)
@@ -2209,6 +2216,8 @@ local function resetAllToggles(silent)
         S.lastFleeTP = 0
         if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
         if S.farmAnchor then S.farmAnchor:Destroy() S.farmAnchor = nil end
+        if S.farmGyro then S.farmGyro:Destroy() S.farmGyro = nil end
+        if S.farmVelocity then S.farmVelocity:Destroy() S.farmVelocity = nil end
         if S.fleeAnchor then S.fleeAnchor:Destroy() S.fleeAnchor = nil end
     end
     if S.notifyRoundStart then S.notifyRoundStart = false setOff(U.rStartBtn, U.rStartInd) end
@@ -2351,6 +2360,8 @@ end
 
 local function runPostBagAction()
     if S.farmAnchor then S.farmAnchor:Destroy() S.farmAnchor = nil end
+    if S.farmGyro then S.farmGyro:Destroy() S.farmGyro = nil end
+    if S.farmVelocity then S.farmVelocity:Destroy() S.farmVelocity = nil end
     if S.fleeAnchor then S.fleeAnchor:Destroy() S.fleeAnchor = nil end
 
     if not isBagFull() then
@@ -2404,72 +2415,52 @@ local function runPostBagAction()
 end
 
 -- ============================================================
--- FARM ANCHOR (AlignPosition — smooth, modern)
+-- FARM MOVEMENT (BodyGyro + BodyVelocity approach)
 -- ============================================================
-local function getOrCreateFarmAnchor(hrp)
-    if S.farmAnchor and S.farmAnchor.Parent == hrp then
-        return S.farmAnchor
-    end
+local function startFarmFlight(hrp, hum)
     if S.farmAnchor then S.farmAnchor:Destroy() end
+    if S.farmGyro then S.farmGyro:Destroy() end
+    if S.farmVelocity then S.farmVelocity:Destroy() end
 
-    -- AlignPosition is the modern replacement for BodyPosition (deprecated)
-    local ap = Instance.new("AlignPosition")
-    ap.Name = "FarmAlign"
-    ap.MaxForce = 1e6
-    ap.Responsiveness = 12        -- smooth glide, not instant
-    ap.RigidityEnabled = false     -- allow natural drift
-    ap.ApplyAtCenterOfMass = true
-    ap.Mode = Enum.PositionAlignmentMode.OneAttachment
-    ap.Position = hrp.Position
-    ap.Parent = hrp
+    -- BodyPosition: keeps player under map at safe Y
+    S.farmAnchor = Instance.new("BodyPosition")
+    S.farmAnchor.Name = "FarmAnchor"
+    S.farmAnchor.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    S.farmAnchor.P = 15000
+    S.farmAnchor.D = 5000
+    S.farmAnchor.Position = hrp.Position
+    S.farmAnchor.Parent = hrp
 
-    local att = Instance.new("Attachment")
-    att.Name = "FarmAtt"
-    att.Parent = hrp
-    ap.Attachment0 = att
+    -- BodyGyro: tilts the character to lie down
+    S.farmGyro = Instance.new("BodyGyro")
+    S.farmGyro.Name = "FarmGyro"
+    S.farmGyro.P = 9000
+    S.farmGyro.D = 500
+    S.farmGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    -- Tilt CFrame: 90 degrees forward (X axis) to lie flat
+    S.farmGyro.CFrame = hrp.CFrame * CFrame.Angles(math.rad(90), 0, 0)
+    S.farmGyro.Parent = hrp
 
-    S.farmAnchor = ap
-    S.farmAnchorAtt = att
-    return ap
+    -- BodyVelocity: drives horizontal movement toward coin
+    S.farmVelocity = Instance.new("BodyVelocity")
+    S.farmVelocity.Name = "FarmVelocity"
+    S.farmVelocity.MaxForce = Vector3.new(9e9, 0, 9e9) -- no Y force, BodyPosition handles Y
+    S.farmVelocity.P = 5000
+    S.farmVelocity.Velocity = Vector3.zero
+    S.farmVelocity.Parent = hrp
+
+    hum.PlatformStand = true
 end
 
-local function destroyFarmAnchor()
+local function stopFarmFlight()
     if S.farmAnchor then S.farmAnchor:Destroy() S.farmAnchor = nil end
-    if S.farmAnchorAtt then S.farmAnchorAtt:Destroy() S.farmAnchorAtt = nil end
-end
-
--- ============================================================
--- FLEE ANCHOR (upward flight)
--- ============================================================
-local function getOrCreateFleeAnchor(hrp)
-    if S.fleeAnchor and S.fleeAnchor.Parent == hrp then
-        return S.fleeAnchor
+    if S.farmGyro then S.farmGyro:Destroy() S.farmGyro = nil end
+    if S.farmVelocity then S.farmVelocity:Destroy() S.farmVelocity = nil end
+    local c = player.Character
+    if c then
+        local h = c:FindFirstChildOfClass("Humanoid")
+        if h then h.PlatformStand = false end
     end
-    if S.fleeAnchor then S.fleeAnchor:Destroy() end
-
-    local ap = Instance.new("AlignPosition")
-    ap.Name = "FleeAlign"
-    ap.MaxForce = 1e6
-    ap.Responsiveness = 20        -- snappier for escape
-    ap.RigidityEnabled = false
-    ap.ApplyAtCenterOfMass = true
-    ap.Mode = Enum.PositionAlignmentMode.OneAttachment
-    ap.Position = hrp.Position + Vector3.new(0, 200, 0)  -- fly UP
-    ap.Parent = hrp
-
-    local att = Instance.new("Attachment")
-    att.Name = "FleeAtt"
-    att.Parent = hrp
-    ap.Attachment0 = att
-
-    S.fleeAnchor = ap
-    S.fleeAnchorAtt = att
-    return ap
-end
-
-local function destroyFleeAnchor()
-    if S.fleeAnchor then S.fleeAnchor:Destroy() S.fleeAnchor = nil end
-    if S.fleeAnchorAtt then S.fleeAnchorAtt:Destroy() S.fleeAnchorAtt = nil end
 end
 
 -- ============================================================
@@ -2487,16 +2478,12 @@ local function autoFarmCoins()
 
     if isPlayerInSpawn(player) then return end
 
-    -- Lay avatar down so anti-cheat sees a non-standing state
-    hum.PlatformStand = true
-
     if isBagFull() then
         if not S.autoFarmBagFullNotified then
             S.autoFarmBagFullNotified = true
             sendNotification("Auto Farm", "Bag full — running role action", SOUNDS.notify)
         end
-        destroyFarmAnchor()
-        hum.PlatformStand = false
+        stopFarmFlight()
         S.currentFarmCoin = nil
         runPostBagAction()
         return
@@ -2541,9 +2528,35 @@ local function autoFarmCoins()
     local coin = S.currentFarmCoin
     if not coin or not coin.Parent then return end
 
-    -- Smoothly glide to coin XZ while staying under map
-    local anchor = getOrCreateFarmAnchor(hrp)
-    anchor.Position = Vector3.new(coin.Position.X, safeY, coin.Position.Z)
+    -- Initialize flight if not already active
+    if not S.farmAnchor or not S.farmGyro or not S.farmVelocity then
+        startFarmFlight(hrp, hum)
+    end
+
+    -- Update BodyPosition to keep us under map at coin XZ
+    if S.farmAnchor then
+        S.farmAnchor.Position = Vector3.new(coin.Position.X, safeY, coin.Position.Z)
+    end
+
+    -- Update BodyGyro to keep lying flat while moving
+    if S.farmGyro then
+        local moveDir = (Vector3.new(coin.Position.X, hrp.Position.Y, coin.Position.Z) - hrp.Position)
+        if moveDir.Magnitude > 0.5 then
+            S.farmGyro.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + moveDir) * CFrame.Angles(math.rad(90), 0, 0)
+        else
+            S.farmGyro.CFrame = hrp.CFrame * CFrame.Angles(math.rad(90), 0, 0)
+        end
+    end
+
+    -- Update BodyVelocity for smooth horizontal glide
+    if S.farmVelocity then
+        local moveDir = (Vector3.new(coin.Position.X, hrp.Position.Y, coin.Position.Z) - hrp.Position)
+        if moveDir.Magnitude > 0.5 then
+            S.farmVelocity.Velocity = moveDir.Unit * S.FARM_FLIGHT_SPEED
+        else
+            S.farmVelocity.Velocity = Vector3.zero
+        end
+    end
 end
 
 -- ============================================================
@@ -2571,14 +2584,29 @@ RunService.Heartbeat:Connect(function()
 
     -- Trigger flee if murderer too close and not already fleeing
     if distXZ <= S.FLEE_TRIGGER_DIST and tick() >= S.fleeUntil then
-        S.fleeUntil = tick() + S.FLEE_DURATION
+        S.fleeUntil = tick() + 2.5
         S.currentFarmCoin = nil
 
-        -- Destroy farm anchor, create flee anchor (fly UP)
-        destroyFarmAnchor()
-        local fleeAp = getOrCreateFleeAnchor(hrp)
-        fleeAp.Position = hrp.Position + Vector3.new(0, 200, 0)
+        -- Clean up farm flight
+        stopFarmFlight()
+
+        -- Fly UP away from murderer
+        local fleeBP = Instance.new("BodyPosition")
+        fleeBP.Name = "FleeAnchor"
+        fleeBP.MaxForce = Vector3.lessThan(9e9, 9e9, 9e9)
+        fleeBP.P = 15000
+        fleeBP.D = 5000
+        fleeBP.Position = hrp.Position + Vector3.new(0, 300, 0)
+        fleeBP.Parent = hrp
+
         hum.PlatformStand = true
+
+        -- Auto-cleanup flee anchor after duration
+        task.delay(2.5, function()
+            if fleeBP and fleeBP.Parent then
+                fleeBP:Destroy()
+            end
+        end)
 
         sendNotification("Auto Farm", "Murderer nearby — flying away!", SOUNDS.alert)
     end
@@ -3198,9 +3226,8 @@ player.CharacterAdded:Connect(function(character)
     S.currentFarmCoin = nil
     S.lastFarmTP = 0
     S.lastFleeTP = 0
+    stopFarmFlight()
     if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
-    destroyFarmAnchor()
-    destroyFleeAnchor()
     if speedBV then speedBV:Destroy() speedBV = nil end
     if S.noclip then
         task.wait(0.1)
