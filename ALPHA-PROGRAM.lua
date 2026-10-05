@@ -1,4 +1,4 @@
---// MM2 MENU BY ARBUZ v1BETA
+--// MM2 MENU BY ARBUZ v0.9
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -10,9 +10,6 @@ local TeleportService = game:GetService("TeleportService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- ============================================================
--- STATE (all packed into one table to stay under the local limit)
--- ============================================================
 local S = {
     noclip = false, infinityJump = false, flingOnTouch = false, flingThirdParty = false,
     flyEnabled = false, autoNotifyRoles = false, autoKillAll = false, autoGunTP = false,
@@ -27,6 +24,7 @@ local S = {
     resizing = false, dragging = false, reopenDragging = false,
     lastSafePosition = nil, lastSafeUpdate = 0, antiVoidCooldown = false,
     VOID_Y_THRESHOLD = -50, ANTI_FLING_MAX_SPEED = 200, ANTI_FLING_MAX_ANGULAR = 500,
+    pendingNotify = false, pendingNotifySince = 0,
 }
 
 local ROLE_COLORS = {
@@ -56,9 +54,6 @@ local GUN_SCAN_INTERVAL = 0.5
 local lastAutoGunTP = 0
 local currentLayoutOrder = 0
 
--- ============================================================
--- HELPERS
--- ============================================================
 local function sendNotification(title, text)
     pcall(function() StarterGui:SetCore("SendNotification", {Title=title, Text=text, Duration=5}) end)
 end
@@ -68,9 +63,6 @@ local function getLayoutOrder()
     return currentLayoutOrder
 end
 
--- ============================================================
--- GUI (all widget refs live in U table)
--- ============================================================
 local U = {}
 
 local existing = playerGui:FindFirstChild("MM2MenuByArbuz")
@@ -109,7 +101,7 @@ U.title = Instance.new("TextLabel")
 U.title.Size = UDim2.new(1, -120, 1, 0)
 U.title.Position = UDim2.fromOffset(10, 0)
 U.title.BackgroundTransparency = 1
-U.title.Text = "MM2 MENU BY ARBUZ v0.9BETA"
+U.title.Text = "MM2 MENU BY ARBUZ v0.9"
 U.title.TextColor3 = Color3.fromRGB(245, 245, 250)
 U.title.TextSize = 12
 U.title.Font = Enum.Font.GothamBold
@@ -203,9 +195,6 @@ do
     local l = Instance.new("UIListLayout") l.Padding = UDim.new(0, 6) l.SortOrder = Enum.SortOrder.LayoutOrder l.Parent = U.content
 end
 
--- ============================================================
--- WIDGET BUILDERS
--- ============================================================
 local function createSectionTitle(text)
     local l = Instance.new("TextLabel")
     l.Size = UDim2.new(1, 0, 0, 20)
@@ -269,9 +258,6 @@ local function setOff(b, i)
     i.BackgroundColor3 = Color3.fromRGB(80, 82, 90)
 end
 
--- ============================================================
--- SPAWN CACHE
--- ============================================================
 local function refreshSpawnCache()
     local nc = {}
     for _, obj in ipairs(workspace:GetDescendants()) do
@@ -302,9 +288,6 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- MOVEMENT
--- ============================================================
 createSectionTitle("MOVEMENT SETTINGS")
 
 U.noclipBtn, U.noclipInd = createToggle("Noclip", "Noclip")
@@ -332,9 +315,6 @@ end)
 
 U.flyBtn, U.flyInd = createToggle("Fly", "Fly")
 
--- ============================================================
--- FLY PANEL
--- ============================================================
 local FP = {}
 
 FP.panel = Instance.new("Frame")
@@ -476,7 +456,6 @@ FP.down.ZIndex = 21
 FP.down.Parent = FP.panel
 do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 7) c.Parent = FP.down end
 
--- fly state (kept as locals — small count)
 local flyBV, flyBG, flyChar, flyHum, flyRoot = nil, nil, nil, nil, nil
 local flyUpFlag, flyDownFlag = 0, 0
 
@@ -567,9 +546,6 @@ FP.up.MouseButton1Up:Connect(function() flyUpFlag = 0 end)
 FP.down.MouseButton1Down:Connect(function() flyDownFlag = -1 end)
 FP.down.MouseButton1Up:Connect(function() flyDownFlag = 0 end)
 
--- ============================================================
--- INFINITY JUMP
--- ============================================================
 U.infBtn, U.infInd = createToggle("InfinityJump", "Infinity Jump")
 U.infBtn.MouseButton1Click:Connect(function()
     S.infinityJump = not S.infinityJump
@@ -583,9 +559,6 @@ UserInputService.JumpRequest:Connect(function()
     if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
 end)
 
--- ============================================================
--- FLING 3RD PARTY
--- ============================================================
 U.f3Btn, U.f3Ind = createToggle("FlingOnTouch", "Fling 3rd party")
 U.f3Btn.MouseButton1Click:Connect(function()
     S.flingThirdParty = not S.flingThirdParty
@@ -601,9 +574,6 @@ U.f3Btn.MouseButton1Click:Connect(function()
     end
 end)
 
--- ============================================================
--- FLING ON TOUCH
--- ============================================================
 local function flingLoop()
     local lp = player
     local c, hrp, vel, movel = nil, nil, nil, 0.1
@@ -638,9 +608,6 @@ U.fib.MouseButton1Click:Connect(function()
     end
 end)
 
--- ============================================================
--- SPEEDHACK
--- ============================================================
 createSectionTitle("SPEEDHACK")
 
 U.shBtn, U.shInd = createToggle("Speedhack", "Speedhack")
@@ -731,9 +698,6 @@ RunService.RenderStepped:Connect(function()
     if h and h.WalkSpeed ~= S.speedhackSpeed then h.WalkSpeed = S.speedhackSpeed end
 end)
 
--- ============================================================
--- ROLE ESP
--- ============================================================
 createSectionTitle("ROLE ESP SETTINGS")
 
 local function makeEspBtn(role)
@@ -754,9 +718,6 @@ makeEspBtn("Murderer")
 makeEspBtn("Sheriff")
 makeEspBtn("Hero")
 
--- ============================================================
--- ITEM ESP (Gun)
--- ============================================================
 createSectionTitle("ITEM ESP SETTINGS")
 
 U.gunBtn, U.gunInd = createToggle("GunESP", "Gun ESP")
@@ -774,9 +735,6 @@ U.gunBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- ============================================================
--- NOTIFIER
--- ============================================================
 createSectionTitle("NOTIFIER SETTINGS")
 
 local function fmtRole(r, n)
@@ -803,6 +761,7 @@ U.autoNotBtn.MouseButton1Click:Connect(function()
         lastNotifiedMurderer = nil
         lastNotifiedSheriff = nil
         lastNotifiedHero = nil
+        S.pendingNotify = false
     end
 end)
 
@@ -820,9 +779,6 @@ U.autoChatBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- ============================================================
--- MURDERER
--- ============================================================
 createSectionTitle("MURDERER SETTINGS")
 
 local function getKnife()
@@ -894,9 +850,6 @@ U.killSheriffBtn.MouseButton1Click:Connect(function() killByName(SheriffName) en
 U.killHeroBtn = createActionButton("KillHeroNow", "Kill Hero Now")
 U.killHeroBtn.MouseButton1Click:Connect(function() killByName(HeroName) end)
 
--- ============================================================
--- SHERIFF
--- ============================================================
 createSectionTitle("SHERIFF SETTINGS")
 
 local function getGun()
@@ -937,9 +890,6 @@ end
 U.killMurdererBtn = createActionButton("KillMurdererNow", "Kill Murderer Now")
 U.killMurdererBtn.MouseButton1Click:Connect(shootMurderer)
 
--- ============================================================
--- TELEPORT
--- ============================================================
 createSectionTitle("TELEPORT SETTINGS")
 
 local function findGunPart()
@@ -1118,9 +1068,6 @@ U.tpSheriffBtn.MouseButton1Click:Connect(function() tpByName(SheriffName) end)
 U.tpHeroBtn = createActionButton("TeleportHero", "Teleport To Hero")
 U.tpHeroBtn.MouseButton1Click:Connect(function() tpByName(HeroName) end)
 
--- ============================================================
--- UTILITY
--- ============================================================
 createSectionTitle("UTILITY SETTINGS")
 
 U.avBtn, U.avInd = createToggle("AntiVoid", "Anti Fall Down (Void)")
@@ -1204,9 +1151,6 @@ U.turnOffBtn.Parent = U.content
 do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = U.turnOffBtn end
 U.turnOffBtn.MouseButton1Click:Connect(resetAllToggles)
 
--- ============================================================
--- ESP SYSTEM
--- ============================================================
 local function mkHL(t)
     if t == player or not t.Character then return end
     local h = t.Character:FindFirstChild("RoleESP")
@@ -1308,17 +1252,27 @@ local function getRoles()
         lastNotifiedHero = nil
         S.lastChatSentMurderer = nil
         S.roundActive = false
+        S.pendingNotify = false
         noMurdererSince = nil
     end
 
     if S.autoNotifyRoles then
-        if (MurdererName and MurdererName ~= lastNotifiedMurderer)
+        local changed = (MurdererName and MurdererName ~= lastNotifiedMurderer)
             or (SheriffName and SheriffName ~= lastNotifiedSheriff)
-            or (HeroName and HeroName ~= lastNotifiedHero) then
-            lastNotifiedMurderer = MurdererName
-            lastNotifiedSheriff = SheriffName
-            lastNotifiedHero = HeroName
-            notifyAllRoles()
+            or (HeroName and HeroName ~= lastNotifiedHero)
+        if changed then
+            if not S.pendingNotify then
+                S.pendingNotify = true
+                S.pendingNotifySince = tick()
+            elseif tick() - S.pendingNotifySince >= 0.5 then
+                lastNotifiedMurderer = MurdererName
+                lastNotifiedSheriff = SheriffName
+                lastNotifiedHero = HeroName
+                S.pendingNotify = false
+                notifyAllRoles()
+            end
+        else
+            S.pendingNotify = false
         end
     end
 end
@@ -1387,9 +1341,6 @@ Players.PlayerRemoving:Connect(function(t)
     if HeroName == t.Name then HeroName = nil end
 end)
 
--- ============================================================
--- GUN ESP
--- ============================================================
 local function isGunHeld(g)
     for _, p in ipairs(Players:GetPlayers()) do
         local c = p.Character
@@ -1440,9 +1391,6 @@ local function updateGunESP()
     end
 end
 
--- ============================================================
--- AUTO CHAT
--- ============================================================
 local function sendChat(msg)
     local sent = false
     pcall(function()
@@ -1479,9 +1427,6 @@ local function checkAutoChat()
     end
 end
 
--- ============================================================
--- LOOPS
--- ============================================================
 RunService.Stepped:Connect(function()
     if not S.noclip or not player.Character then return end
     for _, o in ipairs(player.Character:GetDescendants()) do
@@ -1556,9 +1501,6 @@ player.CharacterAdded:Connect(function(character)
     updateHL()
 end)
 
--- ============================================================
--- DRAG / RESIZE
--- ============================================================
 local dragStart, dragStartPosition, resizeStart, resizeStartSize, reopenDragStart, reopenDragStartPosition
 
 U.header.InputBegan:Connect(function(i)
@@ -1614,9 +1556,6 @@ UserInputService.InputChanged:Connect(function(i)
     end
 end)
 
--- ============================================================
--- SHOW / MIN / CLOSE
--- ============================================================
 local function showMenu()
     S.menuVisible = true
     U.frame.Visible = true
@@ -1664,9 +1603,6 @@ UserInputService.InputBegan:Connect(function(i, p)
     end
 end)
 
--- ============================================================
--- MAIN LOOP
--- ============================================================
 getRoles()
 updateHL()
 updateGunESP()
