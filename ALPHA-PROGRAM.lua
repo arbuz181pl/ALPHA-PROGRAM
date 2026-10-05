@@ -97,6 +97,14 @@ local ANTI_FLING_MAX_ANGULAR = 500
 local lastSafePosition = nil
 local lastSafeUpdate = 0
 
+pcall(function()
+	if not ReplicatedStorage:FindFirstChild("juisdfj0i32i0eidsuf0iok") then
+		local detection = Instance.new("Decal")
+		detection.Name = "juisdfj0i32i0eidsuf0iok"
+		detection.Parent = ReplicatedStorage
+	end
+end)
+
 --==================================================
 -- PLAYER DATA (safe lookup)
 --==================================================
@@ -106,6 +114,7 @@ pcall(function()
 	GetPlayerData = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
 end)
 
+-- PERSISTENT role names — only reset on round change, not every poll
 local MurdererName = nil
 local SheriffName = nil
 local HeroName = nil
@@ -271,7 +280,7 @@ minimizeCorner.CornerRadius = UDim.new(0, 7)
 minimizeCorner.Parent = minimizeButton
 
 --==================================================
--- RESIZE HANDLE
+-- RESIZE HANDLE (bottom-right corner)
 --==================================================
 
 local resizeHandle = Instance.new("TextButton")
@@ -740,7 +749,7 @@ flyPlus.MouseButton1Click:Connect(function() updateFlySpeed(flySpeed + 1) end)
 flySpeedBox.FocusLost:Connect(function() updateFlySpeed(flySpeedBox.Text) end)
 
 --==================================================
--- FLY (compact version — camera-look based)
+-- FLY (compact — camera-look based)
 --==================================================
 
 local function stopFly()
@@ -1050,7 +1059,7 @@ createESPButton("Sheriff")
 createESPButton("Hero")
 
 --==================================================
--- ITEM ESP (Gun)
+-- ITEM ESP SETTINGS (Gun)
 --==================================================
 
 createSectionTitle("ITEM ESP SETTINGS")
