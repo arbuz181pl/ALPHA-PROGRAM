@@ -6,6 +6,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 
 local RAINBOW_SPEED = 0.25
 
@@ -18,9 +19,18 @@ local S = {
     autoSendMurdererChat = false, autoSendSheriffChat = false, antiVoidEnabled = false,
     antiFlingEnabled = false, antiAfkEnabled = false, antiAfkConn = nil,
     playerDistanceOn = false, playerDistBillboards = {},
-    killerAlarmOn = false, killerAlarmCooldown = 0, killerAlarmConn = nil,
+    killerAlarmOn = false, killerAlarmCooldown = 0,
     roundTimerOn = false, roundTimerStart = 0, roundTimerLabel = nil,
     spectateKiller = false, crosshairOn = false, crosshairGui = nil,
+    keybindsEnabled = true, scriptClosed = false,
+    gunDropAlert = false, lastGunDropped = false,
+    notifyRoundStart = false, notifyRoundEnd = false, notifyPreRoundEnd = false, preRoundEndFired = false,
+    playerJoinLeaveNotify = false,
+    menuOpacity = 100,
+    killerTrailOn = false, sheriffTrailOn = false, heroTrailOn = false,
+    cameraFollowMurderer = false,
+    killSoundOn = false,
+    lastKnownMurderer = nil, lastKnownSheriff = nil, lastKnownHero = nil,
     flySpeed = 50, speedhackEnabled = false, speedhackSpeed = 45,
     guiLocked = false, flyPanelLocked = false, minimized = false, menuVisible = true,
     espEnabled = { Innocent = false, Murderer = false, Sheriff = false, Hero = false },
@@ -84,6 +94,15 @@ local function sendNotification(title, text)
     pcall(function() StarterGui:SetCore("SendNotification", {Title=title, Text=text, Duration=5}) end)
 end
 
+local function playAlertSound(id, vol)
+    local snd = Instance.new("Sound")
+    snd.SoundId = id or "rbxassetid://131961136"
+    snd.Volume = vol or 1.5
+    snd.Parent = playerGui
+    snd:Play()
+    task.delay(4, function() if snd then snd:Destroy() end end)
+end
+
 local function getLayoutOrder()
     currentLayoutOrder = currentLayoutOrder + 1
     return currentLayoutOrder
@@ -101,6 +120,13 @@ U.gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 U.gui.DisplayOrder = 100
 U.gui.Parent = playerGui
 
+U.canvas = Instance.new("CanvasGroup")
+U.canvas.Name = "Canvas"
+U.canvas.Size = UDim2.new(1, 0, 1, 0)
+U.canvas.BackgroundTransparency = 1
+U.canvas.GroupTransparency = 0
+U.canvas.Parent = U.gui
+
 U.frame = Instance.new("Frame")
 U.frame.Name = "Main"
 U.frame.Size = UDim2.fromOffset(460, 380)
@@ -108,7 +134,7 @@ U.frame.Position = UDim2.new(0.5, -230, 0.5, -190)
 U.frame.BackgroundColor3 = Color3.fromRGB(22, 23, 28)
 U.frame.BorderSizePixel = 0
 U.frame.Active = true
-U.frame.Parent = U.gui
+U.frame.Parent = U.canvas
 do
     local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 12) c.Parent = U.frame
     U.frameStroke = Instance.new("UIStroke")
@@ -224,15 +250,21 @@ do
     U.reopenStroke.Parent = U.reopen
 end
 
-U.sidebar = Instance.new("Frame")
+U.sidebar = Instance.new("ScrollingFrame")
 U.sidebar.Name = "Sidebar"
 U.sidebar.Size = UDim2.new(0, 100, 1, -66)
 U.sidebar.Position = UDim2.fromOffset(10, 55)
 U.sidebar.BackgroundTransparency = 1
+U.sidebar.BorderSizePixel = 0
+U.sidebar.ScrollBarThickness = 3
+U.sidebar.ScrollBarImageColor3 = Color3.fromRGB(75, 77, 85)
+U.sidebar.CanvasSize = UDim2.new(0, 0, 0, 0)
+U.sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y
+U.sidebar.ScrollingDirection = Enum.ScrollingDirection.Y
 U.sidebar.Parent = U.frame
 do
     local l = Instance.new("UIListLayout")
-    l.Padding = UDim.new(0, 4)
+    l.Padding = UDim.new(0, 3)
     l.SortOrder = Enum.SortOrder.LayoutOrder
     l.Parent = U.sidebar
 end
@@ -264,7 +296,7 @@ end
 
 U.tabFrames = {}
 U.tabs = {}
-local tabNames = {"Movement", "ESP", "Notifier", "Murderer", "Sheriff", "Teleport", "Keybinds", "Utility", "Config"}
+local tabNames = {"Movement", "ESP", "Notifier", "Murderer", "Sheriff", "Teleport", "Keybinds", "Settings", "Utility", "Config"}
 
 for _, tabName in ipairs(tabNames) do
     local fr = Instance.new("ScrollingFrame")
@@ -303,9 +335,7 @@ local function switchTab(name)
             btn.TextColor3 = Color3.fromRGB(200, 200, 210)
         end
     end
-    if U.searchBox.Text ~= "" then
-        U.searchBox.Text = ""
-    end
+    if U.searchBox.Text ~= "" then U.searchBox.Text = "" end
     local fr = U.tabFrames[name]
     if fr then
         for _, child in ipairs(fr:GetChildren()) do
@@ -318,7 +348,7 @@ local iOrder = 0
 for _, tabName in ipairs(tabNames) do
     iOrder = iOrder + 1
     local tb = Instance.new("TextButton")
-    tb.Size = UDim2.new(1, 0, 0, 30)
+    tb.Size = UDim2.new(1, -4, 0, 26)
     tb.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
     tb.BorderSizePixel = 0
     tb.Text = tabName
@@ -330,7 +360,7 @@ for _, tabName in ipairs(tabNames) do
     tb.LayoutOrder = iOrder
     tb.Parent = U.sidebar
     do
-        local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 7) c.Parent = tb
+        local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 6) c.Parent = tb
         local p = Instance.new("UIPadding") p.PaddingLeft = UDim.new(0, 8) p.Parent = tb
     end
     U.tabs[tabName] = tb
@@ -987,7 +1017,7 @@ end
 U.notifyBtn = createActionButton("NotifyRoles", "Notify Roles")
 U.notifyBtn.MouseButton1Click:Connect(notifyAllRoles)
 
-U.autoNotBtn, U.autoNotInd = createToggle("AutoNotifyRound", "Auto Notify Round")
+U.autoNotBtn, U.autoNotInd = createToggle("AutoNotifyRound", "Auto Notify Round (Roles)")
 U.autoNotBtn.MouseButton1Click:Connect(function()
     S.autoNotifyRoles = not S.autoNotifyRoles
     if S.autoNotifyRoles then
@@ -999,6 +1029,32 @@ U.autoNotBtn.MouseButton1Click:Connect(function()
         lastNotifiedHero = nil
         S.pendingNotify = false
     end
+end)
+
+createSectionTitle("ROUND EVENTS")
+
+U.rStartBtn, U.rStartInd = createToggle("NotifyRoundStart", "Notify Round Start")
+U.rStartBtn.MouseButton1Click:Connect(function()
+    S.notifyRoundStart = not S.notifyRoundStart
+    if S.notifyRoundStart then setOn(U.rStartBtn, U.rStartInd) else setOff(U.rStartBtn, U.rStartInd) end
+end)
+
+U.rEndBtn, U.rEndInd = createToggle("NotifyRoundEnd", "Notify Round End")
+U.rEndBtn.MouseButton1Click:Connect(function()
+    S.notifyRoundEnd = not S.notifyRoundEnd
+    if S.notifyRoundEnd then setOn(U.rEndBtn, U.rEndInd) else setOff(U.rEndBtn, U.rEndInd) end
+end)
+
+U.rPreBtn, U.rPreInd = createToggle("NotifyPreRoundEnd", "Notify 10s Before Round End")
+U.rPreBtn.MouseButton1Click:Connect(function()
+    S.notifyPreRoundEnd = not S.notifyPreRoundEnd
+    if S.notifyPreRoundEnd then setOn(U.rPreBtn, U.rPreInd) else setOff(U.rPreBtn, U.rPreInd) end
+end)
+
+U.plBtn, U.plInd = createToggle("PlayerJoinLeaveNotify", "Player Join/Leave Alerts")
+U.plBtn.MouseButton1Click:Connect(function()
+    S.playerJoinLeaveNotify = not S.playerJoinLeaveNotify
+    if S.playerJoinLeaveNotify then setOn(U.plBtn, U.plInd) else setOff(U.plBtn, U.plInd) end
 end)
 
 createSectionTitle("CHAT ANNOUNCEMENTS")
@@ -1142,6 +1198,12 @@ U.killSheriffBtn.MouseButton1Click:Connect(function() killByName(SheriffName) en
 U.killHeroBtn = createActionButton("KillHeroNow", "Kill Hero Now")
 U.killHeroBtn.MouseButton1Click:Connect(function() killByName(HeroName) end)
 
+U.killSoundBtn, U.killSoundInd = createToggle("KillSound", "Kill Sound")
+U.killSoundBtn.MouseButton1Click:Connect(function()
+    S.killSoundOn = not S.killSoundOn
+    if S.killSoundOn then setOn(U.killSoundBtn, U.killSoundInd) else setOff(U.killSoundBtn, U.killSoundInd) end
+end)
+
 -- ============================================================
 -- SHERIFF TAB
 -- ============================================================
@@ -1190,84 +1252,7 @@ U.killMurdererBtn.MouseButton1Click:Connect(shootMurderer)
 -- TELEPORT TAB
 -- ============================================================
 currentParent = U.tabFrames.Teleport
-createSectionTitle("TELEPORT")
-
-local function findGunPart()
-    local gd = workspace:FindFirstChild("GunDrop", true) or workspace:FindFirstChild("Gun", true)
-    if not gd then return nil end
-    if gd:IsA("BasePart") then return gd end
-    if gd:IsA("Model") then return gd.PrimaryPart or gd:FindFirstChildOfClass("BasePart") end
-    if gd:IsA("Tool") then return gd:FindFirstChild("Handle") or gd:FindFirstChildOfClass("BasePart") end
-    return nil
-end
-
-local function tpGunAndBack()
-    local c = player.Character
-    if not c then return false end
-    local mr = c:FindFirstChild("HumanoidRootPart")
-    if not mr then return false end
-    local tp = findGunPart()
-    if not tp then return false end
-    local orig = mr.CFrame
-    mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
-    task.wait(0.35)
-    mr.CFrame = orig
-    return true
-end
-
--- [FIX] Auto TP gun: after picking up, go DOWN if murderer is near, UP if not
-local function autoTPGunTop()
-    local now = tick()
-    if now - lastAutoGunTP < 3 then return end
-    local c = player.Character
-    if not c then return end
-    if c:FindFirstChild("Gun") or c:FindFirstChild("Knife") then return end
-    local mr = c:FindFirstChild("HumanoidRootPart")
-    if not mr then return end
-    local tp = findGunPart()
-    if not tp then return end
-    lastAutoGunTP = now
-    mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
-    task.wait(0.2)
-    local safeY = 300
-    if MurdererName then
-        local murd = Players:FindFirstChild(MurdererName)
-        if murd and murd.Character then
-            local mRoot = murd.Character:FindFirstChild("HumanoidRootPart")
-            if mRoot and (mRoot.Position - tp.Position).Magnitude < 100 then
-                safeY = -100
-            end
-        end
-    end
-    mr.CFrame = CFrame.new(tp.Position.X, safeY, tp.Position.Z)
-    mr.Velocity = Vector3.zero
-end
-
-U.autoGunBtn, U.autoGunInd = createToggle("AutoGunTP", "Auto Teleport To Gun")
-U.autoGunBtn.MouseButton1Click:Connect(function()
-    S.autoGunTP = not S.autoGunTP
-    if S.autoGunTP then setOn(U.autoGunBtn, U.autoGunInd) else setOff(U.autoGunBtn, U.autoGunInd) end
-end)
-
-U.spawnTpBtn = createActionButton("SpawnTeleport", "Teleport To Spawn")
-U.spawnTpBtn.MouseButton1Click:Connect(function()
-    local c = player.Character
-    if not c then return end
-    local mr = c:FindFirstChild("HumanoidRootPart")
-    if not mr then return end
-    local sl = workspace:FindFirstChildOfClass("SpawnLocation")
-    if sl then mr.CFrame = sl.CFrame + Vector3.new(0, 3, 0) return end
-    local sp = workspace:FindFirstChild("Spawn", true)
-    if sp and sp:IsA("BasePart") then mr.CFrame = sp.CFrame + Vector3.new(0, 3, 0) end
-end)
-
-U.gunTpBtn = createActionButton("GunTeleport", "Teleport To Gun")
-U.gunTpBtn.MouseButton1Click:Connect(function()
-    if not tpGunAndBack() then sendNotification("MM2 Menu", "No dropped gun found on the map!") end
-end)
-
-U.playerTpBtn = createActionButton("PlayerTeleport", "Teleport To Player")
-U.killSelBtn = createActionButton("KillSelectedPlayer", "Kill Selected Player")
+createSectionTitle("PLAYER ACTIONS")
 
 U.pDropdown = Instance.new("TextButton")
 U.pDropdown.Size = UDim2.new(1, 0, 0, 34)
@@ -1340,6 +1325,9 @@ U.pDropdown.MouseButton1Click:Connect(function()
     end
 end)
 
+U.playerTpBtn = createActionButton("PlayerTeleport", "Teleport To Player")
+U.killSelBtn = createActionButton("KillSelectedPlayer", "Kill Selected Player")
+
 U.playerTpBtn.MouseButton1Click:Connect(function()
     if not S.selectedPlayer or not S.selectedPlayer.Character then return end
     local tr = S.selectedPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -1360,6 +1348,8 @@ Players.PlayerRemoving:Connect(function(t)
     if S.dropdownOpen then refreshPList() end
 end)
 
+createSectionTitle("ROLE TELEPORTS")
+
 local function tpByName(n)
     if not n then return end
     local t = Players:FindFirstChild(n)
@@ -1379,11 +1369,91 @@ U.tpSheriffBtn.MouseButton1Click:Connect(function() tpByName(SheriffName) end)
 U.tpHeroBtn = createActionButton("TeleportHero", "Teleport To Hero")
 U.tpHeroBtn.MouseButton1Click:Connect(function() tpByName(HeroName) end)
 
+createSectionTitle("WORLD TELEPORTS")
+
+local function findGunPart()
+    local gd = workspace:FindFirstChild("GunDrop", true) or workspace:FindFirstChild("Gun", true)
+    if not gd then return nil end
+    if gd:IsA("BasePart") then return gd end
+    if gd:IsA("Model") then return gd.PrimaryPart or gd:FindFirstChildOfClass("BasePart") end
+    if gd:IsA("Tool") then return gd:FindFirstChild("Handle") or gd:FindFirstChildOfClass("BasePart") end
+    return nil
+end
+
+local function tpGunAndBack()
+    local c = player.Character
+    if not c then return false end
+    local mr = c:FindFirstChild("HumanoidRootPart")
+    if not mr then return false end
+    local tp = findGunPart()
+    if not tp then return false end
+    local orig = mr.CFrame
+    mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
+    task.wait(0.35)
+    mr.CFrame = orig
+    return true
+end
+
+local function autoTPGunTop()
+    local now = tick()
+    if now - lastAutoGunTP < 3 then return end
+    local c = player.Character
+    if not c then return end
+    if c:FindFirstChild("Gun") or c:FindFirstChild("Knife") then return end
+    local mr = c:FindFirstChild("HumanoidRootPart")
+    if not mr then return end
+    local tp = findGunPart()
+    if not tp then return end
+    lastAutoGunTP = now
+    mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
+    task.wait(0.2)
+    local safeY = 300
+    if MurdererName then
+        local murd = Players:FindFirstChild(MurdererName)
+        if murd and murd.Character then
+            local mRoot = murd.Character:FindFirstChild("HumanoidRootPart")
+            if mRoot and (mRoot.Position - tp.Position).Magnitude < 100 then safeY = -100 end
+        end
+    end
+    mr.CFrame = CFrame.new(tp.Position.X, safeY, tp.Position.Z)
+    mr.Velocity = Vector3.zero
+end
+
+U.autoGunBtn, U.autoGunInd = createToggle("AutoGunTP", "Auto Teleport To Gun")
+U.autoGunBtn.MouseButton1Click:Connect(function()
+    S.autoGunTP = not S.autoGunTP
+    if S.autoGunTP then setOn(U.autoGunBtn, U.autoGunInd) else setOff(U.autoGunBtn, U.autoGunInd) end
+end)
+
+U.spawnTpBtn = createActionButton("SpawnTeleport", "Teleport To Spawn")
+U.spawnTpBtn.MouseButton1Click:Connect(function()
+    local c = player.Character
+    if not c then return end
+    local mr = c:FindFirstChild("HumanoidRootPart")
+    if not mr then return end
+    local sl = workspace:FindFirstChildOfClass("SpawnLocation")
+    if sl then mr.CFrame = sl.CFrame + Vector3.new(0, 3, 0) return end
+    local sp = workspace:FindFirstChild("Spawn", true)
+    if sp and sp:IsA("BasePart") then mr.CFrame = sp.CFrame + Vector3.new(0, 3, 0) end
+end)
+
+U.gunTpBtn = createActionButton("GunTeleport", "Teleport To Gun")
+U.gunTpBtn.MouseButton1Click:Connect(function()
+    if not tpGunAndBack() then sendNotification("MM2 Menu", "No dropped gun found on the map!") end
+end)
+
 -- ============================================================
 -- KEYBINDS TAB
 -- ============================================================
 currentParent = U.tabFrames.Keybinds
 createSectionTitle("KEYBINDS")
+
+U.kbEnabledBtn, U.kbEnabledInd = createToggle("KeybindsEnabled", "All Keybinds Enabled")
+setOn(U.kbEnabledBtn, U.kbEnabledInd)
+U.kbEnabledBtn.MouseButton1Click:Connect(function()
+    S.keybindsEnabled = not S.keybindsEnabled
+    if S.keybindsEnabled then setOn(U.kbEnabledBtn, U.kbEnabledInd) else setOff(U.kbEnabledBtn, U.kbEnabledInd) end
+end)
 
 local kbInfo = Instance.new("TextLabel")
 kbInfo.Size = UDim2.new(1, 0, 0, 20)
@@ -1461,6 +1531,79 @@ for _, entry in ipairs(S.keybindList) do
 end
 
 -- ============================================================
+-- SETTINGS TAB
+-- ============================================================
+currentParent = U.tabFrames.Settings
+createSectionTitle("MENU SETTINGS")
+
+U.opacityLbl = Instance.new("TextLabel")
+U.opacityLbl.Size = UDim2.new(1, 0, 0, 20)
+U.opacityLbl.BackgroundTransparency = 1
+U.opacityLbl.Text = "Menu Opacity: 100%"
+U.opacityLbl.TextColor3 = Color3.fromRGB(150, 153, 165)
+U.opacityLbl.TextSize = 11
+U.opacityLbl.Font = Enum.Font.GothamBold
+U.opacityLbl.TextXAlignment = Enum.TextXAlignment.Left
+U.opacityLbl.LayoutOrder = getLayoutOrder()
+U.opacityLbl.Parent = currentParent
+
+U.opacitySlider = Instance.new("TextButton")
+U.opacitySlider.Size = UDim2.new(1, 0, 0, 34)
+U.opacitySlider.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+U.opacitySlider.BorderSizePixel = 0
+U.opacitySlider.Text = ""
+U.opacitySlider.AutoButtonColor = false
+U.opacitySlider.LayoutOrder = getLayoutOrder()
+U.opacitySlider.Parent = currentParent
+do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = U.opacitySlider end
+
+U.opacityFill = Instance.new("Frame")
+U.opacityFill.Size = UDim2.new(1, 0, 1, 0)
+U.opacityFill.BackgroundColor3 = Color3.fromRGB(60, 130, 80)
+U.opacityFill.BorderSizePixel = 0
+U.opacityFill.Parent = U.opacitySlider
+do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = U.opacityFill end
+
+U.opacityHandle = Instance.new("Frame")
+U.opacityHandle.Size = UDim2.fromOffset(6, 26)
+U.opacityHandle.Position = UDim2.new(1, -6, 0.5, -13)
+U.opacityHandle.BackgroundColor3 = Color3.fromRGB(220, 220, 230)
+U.opacityHandle.BorderSizePixel = 0
+U.opacityHandle.ZIndex = 2
+U.opacityHandle.Parent = U.opacitySlider
+do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(1, 0) c.Parent = U.opacityHandle end
+
+local opacityDragging = false
+local function applyOpacity(pct)
+    pct = math.clamp(pct, 10, 100)
+    S.menuOpacity = pct
+    U.opacityLbl.Text = "Menu Opacity: " .. tostring(pct) .. "%"
+    U.opacityFill.Size = UDim2.new(pct / 100, 0, 1, 0)
+    U.opacityHandle.Position = UDim2.new(pct / 100, -6, 0.5, -13)
+    U.canvas.GroupTransparency = 1 - (pct / 100)
+end
+
+U.opacitySlider.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        opacityDragging = true
+    end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if not opacityDragging then return end
+    if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+        local rel = (i.Position.X - U.opacitySlider.AbsolutePosition.X) / U.opacitySlider.AbsoluteSize.X
+        applyOpacity(math.floor(rel * 100))
+    end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        opacityDragging = false
+    end
+end)
+
+applyOpacity(100)
+
+-- ============================================================
 -- UTILITY TAB
 -- ============================================================
 currentParent = U.tabFrames.Utility
@@ -1495,9 +1638,15 @@ U.afkBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+U.gunAlertBtn, U.gunAlertInd = createToggle("GunDropAlert", "Gun Drop Alert")
+U.gunAlertBtn.MouseButton1Click:Connect(function()
+    S.gunDropAlert = not S.gunDropAlert
+    if S.gunDropAlert then setOn(U.gunAlertBtn, U.gunAlertInd) else setOff(U.gunAlertBtn, U.gunAlertInd) end
+end)
+
 createSectionTitle("OVERLAYS")
 
-U.killerAlarmBtn, U.killerAlarmInd = createToggle("KillerAlarm", "Killer Alarm")
+U.killerAlarmBtn, U.killerAlarmInd = createToggle("KillerAlarm", "Killer Alarm (50 studs)")
 U.killerAlarmBtn.MouseButton1Click:Connect(function()
     S.killerAlarmOn = not S.killerAlarmOn
     if S.killerAlarmOn then setOn(U.killerAlarmBtn, U.killerAlarmInd) else setOff(U.killerAlarmBtn, U.killerAlarmInd) end
@@ -1510,19 +1659,26 @@ U.roundTimerBtn.MouseButton1Click:Connect(function()
         setOn(U.roundTimerBtn, U.roundTimerInd)
         S.roundTimerLabel.Visible = true
         S.roundTimerStart = tick()
+        S.preRoundEndFired = false
     else
         setOff(U.roundTimerBtn, U.roundTimerInd)
         S.roundTimerLabel.Visible = false
     end
 end)
 
-U.spectateBtn, U.spectateInd = createToggle("SpectateKiller", "Spectate Killer")
+U.spectateBtn, U.spectateInd = createToggle("SpectateKiller", "Spectate Killer (when dead)")
 U.spectateBtn.MouseButton1Click:Connect(function()
     S.spectateKiller = not S.spectateKiller
     if S.spectateKiller then setOn(U.spectateBtn, U.spectateInd) else setOff(U.spectateBtn, U.spectateInd) end
 end)
 
-U.crosshairBtn, U.crosshairInd = createToggle("Crosshair", "Custom Crosshair")
+U.camFollowBtn, U.camFollowInd = createToggle("CameraFollowMurderer", "Camera Follow Murderer")
+U.camFollowBtn.MouseButton1Click:Connect(function()
+    S.cameraFollowMurderer = not S.cameraFollowMurderer
+    if S.cameraFollowMurderer then setOn(U.camFollowBtn, U.camFollowInd) else setOff(U.camFollowBtn, U.camFollowInd) end
+end)
+
+U.crosshairBtn, U.crosshairInd = createToggle("Crosshair", "Rainbow Crosshair")
 U.crosshairBtn.MouseButton1Click:Connect(function()
     S.crosshairOn = not S.crosshairOn
     if S.crosshairOn then
@@ -1534,6 +1690,28 @@ U.crosshairBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+createSectionTitle("TRAILS")
+
+U.killerTrailBtn, U.killerTrailInd = createToggle("KillerTrail", "Killer Trail")
+U.killerTrailBtn.MouseButton1Click:Connect(function()
+    S.killerTrailOn = not S.killerTrailOn
+    if S.killerTrailOn then setOn(U.killerTrailBtn, U.killerTrailInd) else setOff(U.killerTrailBtn, U.killerTrailInd) end
+end)
+
+U.sheriffTrailBtn, U.sheriffTrailInd = createToggle("SheriffTrail", "Sheriff Trail")
+U.sheriffTrailBtn.MouseButton1Click:Connect(function()
+    S.sheriffTrailOn = not S.sheriffTrailOn
+    if S.sheriffTrailOn then setOn(U.sheriffTrailBtn, U.sheriffTrailInd) else setOff(U.sheriffTrailBtn, U.sheriffTrailInd) end
+end)
+
+U.heroTrailBtn, U.heroTrailInd = createToggle("HeroTrail", "Hero Trail")
+U.heroTrailBtn.MouseButton1Click:Connect(function()
+    S.heroTrailOn = not S.heroTrailOn
+    if S.heroTrailOn then setOn(U.heroTrailBtn, U.heroTrailInd) else setOff(U.heroTrailBtn, U.heroTrailInd) end
+end)
+
+createSectionTitle("SERVER")
+
 U.rejoinBtn = createActionButton("Rejoin", "Rejoin Server")
 U.rejoinBtn.MouseButton1Click:Connect(function()
     sendNotification("MM2 Menu", "Rejoining server...")
@@ -1541,6 +1719,25 @@ U.rejoinBtn.MouseButton1Click:Connect(function()
     local ok = pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
     if not ok then
         pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player) end)
+    end
+end)
+
+U.hopBtn = createActionButton("ServerHop", "Server Hop")
+U.hopBtn.MouseButton1Click:Connect(function()
+    sendNotification("MM2 Menu", "Finding new server...")
+    local ok, err = pcall(function()
+        local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+        local data = HttpService:JSONDecode(game:HttpGet(url))
+        local servers = data.data
+        if not servers or #servers == 0 then
+            sendNotification("MM2 Menu", "No other servers found")
+            return
+        end
+        local pick = servers[math.random(1, #servers)]
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
+    end)
+    if not ok then
+        sendNotification("MM2 Menu", "Server hop failed")
     end
 end)
 
@@ -1610,11 +1807,17 @@ local function resetAllToggles()
         S.roundTimerLabel.Visible = false
     end
     if S.spectateKiller then S.spectateKiller = false setOff(U.spectateBtn, U.spectateInd) end
+    if S.cameraFollowMurderer then S.cameraFollowMurderer = false setOff(U.camFollowBtn, U.camFollowInd) end
     if S.crosshairOn then
         S.crosshairOn = false
         setOff(U.crosshairBtn, U.crosshairInd)
         if S.crosshairGui then S.crosshairGui.Enabled = false end
     end
+    if S.gunDropAlert then S.gunDropAlert = false setOff(U.gunAlertBtn, U.gunAlertInd) end
+    if S.killerTrailOn then S.killerTrailOn = false setOff(U.killerTrailBtn, U.killerTrailInd) end
+    if S.sheriffTrailOn then S.sheriffTrailOn = false setOff(U.sheriffTrailBtn, U.sheriffTrailInd) end
+    if S.heroTrailOn then S.heroTrailOn = false setOff(U.heroTrailBtn, U.heroTrailInd) end
+    if S.killSoundOn then S.killSoundOn = false setOff(U.killSoundBtn, U.killSoundInd) end
     sendNotification("MM2 Menu", "All features turned off")
 end
 
@@ -1633,13 +1836,62 @@ do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent =
 U.turnOffBtn.MouseButton1Click:Connect(resetAllToggles)
 
 -- ============================================================
+-- CROSSHAIR
+-- ============================================================
+S.crosshairGui = Instance.new("ScreenGui")
+S.crosshairGui.Name = "MM2Crosshair"
+S.crosshairGui.ResetOnSpawn = false
+S.crosshairGui.IgnoreGuiInset = true
+S.crosshairGui.DisplayOrder = 200
+S.crosshairGui.Enabled = false
+S.crosshairGui.Parent = playerGui
+do
+    U.crosshairH = Instance.new("Frame")
+    U.crosshairH.Size = UDim2.fromOffset(20, 2)
+    U.crosshairH.Position = UDim2.new(0.5, -10, 0.5, -1)
+    U.crosshairH.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    U.crosshairH.BorderSizePixel = 0
+    U.crosshairH.Parent = S.crosshairGui
+    U.crosshairV = Instance.new("Frame")
+    U.crosshairV.Size = UDim2.fromOffset(2, 20)
+    U.crosshairV.Position = UDim2.new(0.5, -1, 0.5, -10)
+    U.crosshairV.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    U.crosshairV.BorderSizePixel = 0
+    U.crosshairV.Parent = S.crosshairGui
+    U.crosshairDot = Instance.new("Frame")
+    U.crosshairDot.Size = UDim2.fromOffset(3, 3)
+    U.crosshairDot.Position = UDim2.new(0.5, -1.5, 0.5, -1.5)
+    U.crosshairDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    U.crosshairDot.BorderSizePixel = 0
+    U.crosshairDot.Parent = S.crosshairGui
+end
+
+-- ============================================================
+-- ROUND TIMER LABEL
+-- ============================================================
+S.roundTimerLabel = Instance.new("TextLabel")
+S.roundTimerLabel.Name = "RoundTimer"
+S.roundTimerLabel.Size = UDim2.fromOffset(100, 32)
+S.roundTimerLabel.Position = UDim2.new(0.5, -50, 0, 20)
+S.roundTimerLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+S.roundTimerLabel.BackgroundTransparency = 0.3
+S.roundTimerLabel.BorderSizePixel = 0
+S.roundTimerLabel.Text = "2:30"
+S.roundTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+S.roundTimerLabel.TextSize = 20
+S.roundTimerLabel.Font = Enum.Font.GothamBold
+S.roundTimerLabel.Visible = false
+S.roundTimerLabel.ZIndex = 100
+S.roundTimerLabel.Parent = U.gui
+do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = S.roundTimerLabel end
+
+-- ============================================================
 -- CONFIG TAB
 -- ============================================================
 currentParent = U.tabFrames.Config
 createSectionTitle("CONFIG PRESETS")
 
 local function applyPvpPreset()
-    -- Anti AFK
     if not S.antiAfkEnabled then
         S.antiAfkEnabled = true
         setOn(U.afkBtn, U.afkInd)
@@ -1650,11 +1902,8 @@ local function applyPvpPreset()
             VU:ClickButton2(Vector2.new())
         end)
     end
-    -- Anti Void
     if not S.antiVoidEnabled then S.antiVoidEnabled = true setOn(U.avBtn, U.avInd) end
-    -- Anti Fling
     if not S.antiFlingEnabled then S.antiFlingEnabled = true setOn(U.afBtn, U.afInd) end
-    -- All ESP
     for r, st in pairs(S.espEnabled) do
         if not st then
             S.espEnabled[r] = true
@@ -1664,7 +1913,11 @@ local function applyPvpPreset()
             end
         end
     end
-    -- Noclip
+    if not S.gunESPEnabled then
+        S.gunESPEnabled = true
+        U.gunBtn.BackgroundColor3 = GUN_COLOR:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+        U.gunInd.BackgroundColor3 = GUN_COLOR
+    end
     if not S.noclip then
         S.noclip = true
         setOn(U.noclipBtn, U.noclipInd)
@@ -1678,10 +1931,20 @@ local function applyPvpPreset()
             end
         end
     end
-    -- Auto Notify Round
     if not S.autoNotifyRoles then S.autoNotifyRoles = true setOn(U.autoNotBtn, U.autoNotInd) end
-    -- Auto Kill All
     if not S.autoKillAll then S.autoKillAll = true setOn(U.autoKillBtn, U.autoKillInd) end
+    if not S.killerAlarmOn then S.killerAlarmOn = true setOn(U.killerAlarmBtn, U.killerAlarmInd) end
+    if not S.roundTimerOn then
+        S.roundTimerOn = true
+        setOn(U.roundTimerBtn, U.roundTimerInd)
+        S.roundTimerLabel.Visible = true
+        S.roundTimerStart = tick()
+    end
+    if not S.crosshairOn then
+        S.crosshairOn = true
+        setOn(U.crosshairBtn, U.crosshairInd)
+        if S.crosshairGui then S.crosshairGui.Enabled = true end
+    end
     sendNotification("MM2 Menu", "PVP Ready preset applied")
 end
 
@@ -1691,9 +1954,9 @@ U.pvpPresetBtn.MouseButton1Click:Connect(applyPvpPreset)
 
 createSectionTitle("PRESET INFO")
 local pInfo = Instance.new("TextLabel")
-pInfo.Size = UDim2.new(1, 0, 0, 90)
+pInfo.Size = UDim2.new(1, 0, 0, 140)
 pInfo.BackgroundTransparency = 1
-pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs\n- Noclip\n- Auto Notify Round\n- Auto Kill All"
+pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (50 studs)\n- Round Timer\n- Rainbow Crosshair"
 pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
 pInfo.TextSize = 11
 pInfo.Font = Enum.Font.Gotham
@@ -1734,6 +1997,19 @@ local function validHolder(n)
     if not h or h.Health <= 0 then return false end
     if isPlayerInSpawn(t) then return false end
     return true
+end
+
+-- Track last known murderer/sheriff/hero for round transitions
+local function roundStartAlert()
+    if S.notifyRoundStart and MurdererName and MurdererName ~= S.lastKnownMurderer then
+        sendNotification("Round Started", "Murderer: " .. tostring(MurdererName))
+        playAlertSound("rbxassetid://130972023882", 1.5)
+    end
+    S.lastKnownMurderer = MurdererName
+    if S.notifyRoundEnd and not MurdererName and S.lastKnownMurderer then
+        sendNotification("Round Ended", "New round starting soon")
+        playAlertSound("rbxassetid://130972023882", 1.5)
+    end
 end
 
 local function getRoles()
@@ -1814,24 +2090,23 @@ local function getRoles()
         noMurdererSince = nil
     end
 
-    -- [FIX] Only notify when murderer is present
+    roundStartAlert()
+
     if S.autoNotifyRoles and MurdererName then
         local changed = MurdererName ~= lastNotifiedMurderer
             or (SheriffName and SheriffName ~= lastNotifiedSheriff)
             or (HeroName and HeroName ~= lastNotifiedHero)
-        if changed then
-            if not S.pendingNotify then
-                S.pendingNotify = true
-                S.pendingNotifySince = tick()
-            elseif tick() - S.pendingNotifySince >= 0.5 then
+        if S.pendingNotify then
+            if tick() - S.pendingNotifySince >= 1.0 then
                 lastNotifiedMurderer = MurdererName
                 lastNotifiedSheriff = SheriffName
                 lastNotifiedHero = HeroName
                 S.pendingNotify = false
                 notifyAllRoles()
             end
-        else
-            S.pendingNotify = false
+        elseif changed then
+            S.pendingNotify = true
+            S.pendingNotifySince = tick()
         end
     end
 end
@@ -1913,12 +2188,83 @@ local function updatePlayerDistance()
     end
 end
 
+-- Trail attach/detach helpers
+local function attachTrail(target, color)
+    if not target or not target.Character then return end
+    local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local att = hrp:FindFirstChild("TrailAtt")
+    if not att then
+        att = Instance.new("Attachment")
+        att.Name = "TrailAtt"
+        att.Parent = hrp
+    end
+    local emit = att:FindFirstChild("TrailEmitter")
+    if not emit then
+        emit = Instance.new("ParticleEmitter")
+        emit.Name = "TrailEmitter"
+        emit.Rate = 40
+        emit.Lifetime = NumberRange.new(0.7)
+        emit.Size = NumberSequence.new(0.7)
+        emit.Speed = NumberRange.new(0)
+        emit.Rotation = NumberRange.new(0)
+        emit.LightEmission = 1
+        emit.Color = ColorSequence.new(color)
+        emit.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.2),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+        emit.Parent = att
+    else
+        emit.Color = ColorSequence.new(color)
+    end
+end
+
+local function clearTrail(target)
+    if not target or not target.Character then return end
+    local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local att = hrp:FindFirstChild("TrailAtt")
+    if att then att:Destroy() end
+end
+
+local function updateTrails()
+    for _, t in ipairs(Players:GetPlayers()) do
+        if t ~= player and t.Character then
+            local isM = MurdererName and t.Name == MurdererName
+            local isS = SheriffName and t.Name == SheriffName
+            local isH = HeroName and t.Name == HeroName
+            if isM and S.killerTrailOn and isAlive(t) then
+                attachTrail(t, ROLE_COLORS.Murderer)
+            elseif isS and S.sheriffTrailOn and isAlive(t) then
+                attachTrail(t, ROLE_COLORS.Sheriff)
+            elseif isH and S.heroTrailOn and isAlive(t) then
+                attachTrail(t, ROLE_COLORS.Hero)
+            else
+                clearTrail(t)
+            end
+        end
+    end
+end
+
 local function rmHL(t)
     if t.Character then
         local h = t.Character:FindFirstChild("RoleESP")
         if h then h:Destroy() end
+        clearTrail(t)
     end
     highlights[t] = nil
+end
+
+local function hookKillSound(t)
+    if not t.Character then return end
+    local hum = t.Character:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    hum.Died:Connect(function()
+        if not S.killSoundOn then return end
+        if MurdererName ~= player.Name then return end
+        playAlertSound("rbxassetid://5801257793", 1.5)
+    end)
 end
 
 for _, t in ipairs(Players:GetPlayers()) do
@@ -1927,18 +2273,26 @@ for _, t in ipairs(Players:GetPlayers()) do
             task.wait(0.2)
             mkHL(t)
             updateHL()
+            hookKillSound(t)
         end)
-        if t.Character then mkHL(t) end
+        if t.Character then mkHL(t) hookKillSound(t) end
     end
 end
 Players.PlayerAdded:Connect(function(t)
+    if S.playerJoinLeaveNotify and t ~= player then
+        sendNotification("Player Joined", t.DisplayName .. " (@" .. t.Name .. ")")
+    end
     t.CharacterAdded:Connect(function()
         task.wait(0.2)
         mkHL(t)
         updateHL()
+        hookKillSound(t)
     end)
 end)
 Players.PlayerRemoving:Connect(function(t)
+    if S.playerJoinLeaveNotify and t ~= player then
+        sendNotification("Player Left", t.DisplayName .. " (@" .. t.Name .. ")")
+    end
     rmHL(t)
     if MurdererName == t.Name then MurdererName = nil end
     if SheriffName == t.Name then SheriffName = nil end
@@ -2028,11 +2382,10 @@ local function checkAutoChat()
     end
 end
 
--- [NEW] Killer Alarm — beeps when murderer comes near
 RunService.Heartbeat:Connect(function()
     if not S.killerAlarmOn or not MurdererName then return end
     local now = tick()
-    if now - S.killerAlarmCooldown < 3 then return end
+    if now - S.killerAlarmCooldown < 2 then return end
     local me = player.Character
     if not me then return end
     local myRoot = me:FindFirstChild("HumanoidRootPart")
@@ -2042,19 +2395,13 @@ RunService.Heartbeat:Connect(function()
     local mRoot = m.Character:FindFirstChild("HumanoidRootPart")
     if not mRoot then return end
     local dist = (myRoot.Position - mRoot.Position).Magnitude
-    if dist < 60 then
+    if dist <= 50 then
         S.killerAlarmCooldown = now
         sendNotification("⚠ MURDERER NEAR", "Murderer is " .. math.floor(dist) .. " studs away!")
-        local snd = Instance.new("Sound")
-        snd.SoundId = "rbxassetid://131961136"
-        snd.Volume = 2
-        snd.Parent = playerGui
-        snd:Play()
-        task.delay(3, function() if snd then snd:Destroy() end end)
+        playAlertSound("rbxassetid://131961136", 2)
     end
 end)
 
--- [NEW] Round Timer — countdown 2:30 that resets on murderer change
 RunService.Heartbeat:Connect(function()
     if not S.roundTimerOn or not S.roundTimerLabel then return end
     local elapsed = tick() - S.roundTimerStart
@@ -2062,23 +2409,57 @@ RunService.Heartbeat:Connect(function()
     local m = math.floor(remaining / 60)
     local s = math.floor(remaining % 60)
     S.roundTimerLabel.Text = string.format("%d:%02d", m, s)
+    if S.notifyPreRoundEnd and not S.preRoundEndFired and remaining <= 10 and remaining > 0 then
+        S.preRoundEndFired = true
+        sendNotification("Round Ending", "Round ends in 10 seconds")
+        playAlertSound("rbxassetid://130972023882", 1.5)
+    end
+    if remaining <= 0 then
+        S.roundTimerStart = tick()
+        S.preRoundEndFired = false
+    end
 end)
 
--- [NEW] Spectate Killer — camera follows murderer after you die
-RunService.RenderStepped:Connect(function()
-    if not S.spectateKiller or not MurdererName then return end
-    local me = player.Character
-    if me then
-        local h = me:FindFirstChildOfClass("Humanoid")
-        if h and h.Health > 0 then return end
+RunService.Heartbeat:Connect(function()
+    if not S.gunDropAlert then return end
+    local gd = workspace:FindFirstChild("GunDrop", true)
+    local isDropped = gd ~= nil
+    if isDropped and not S.lastGunDropped then
+        sendNotification("Gun Dropped", "A gun has appeared on the map!")
+        playAlertSound("rbxassetid://131961136", 1.5)
     end
-    local m = Players:FindFirstChild(MurdererName)
-    if not m or not m.Character then return end
-    local mRoot = m.Character:FindFirstChild("HumanoidRootPart")
-    if not mRoot then return end
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-    cam.CFrame = CFrame.new(mRoot.Position + Vector3.new(0, 10, 15), mRoot.Position)
+    S.lastGunDropped = isDropped
+end)
+
+RunService.RenderStepped:Connect(function()
+    if S.cameraFollowMurderer and MurdererName then
+        local m = Players:FindFirstChild(MurdererName)
+        if m and m.Character then
+            local mRoot = m.Character:FindFirstChild("HumanoidRootPart")
+            if mRoot then
+                local cam = workspace.CurrentCamera
+                cam.CFrame = CFrame.new(mRoot.Position + Vector3.new(0, 8, 12), mRoot.Position)
+            end
+        end
+    end
+    if S.spectateKiller and MurdererName then
+        local me = player.Character
+        local dead = true
+        if me then
+            local h = me:FindFirstChildOfClass("Humanoid")
+            if h and h.Health > 0 then dead = false end
+        end
+        if dead then
+            local m = Players:FindFirstChild(MurdererName)
+            if m and m.Character then
+                local mRoot = m.Character:FindFirstChild("HumanoidRootPart")
+                if mRoot then
+                    local cam = workspace.CurrentCamera
+                    cam.CFrame = CFrame.new(mRoot.Position + Vector3.new(0, 10, 15), mRoot.Position)
+                end
+            end
+        end
+    end
 end)
 
 RunService.Stepped:Connect(function()
@@ -2156,59 +2537,7 @@ player.CharacterAdded:Connect(function(character)
 end)
 
 -- ============================================================
--- CROSSHAIR
--- ============================================================
-S.crosshairGui = Instance.new("ScreenGui")
-S.crosshairGui.Name = "MM2Crosshair"
-S.crosshairGui.ResetOnSpawn = false
-S.crosshairGui.IgnoreGuiInset = true
-S.crosshairGui.DisplayOrder = 200
-S.crosshairGui.Enabled = false
-S.crosshairGui.Parent = playerGui
-do
-    local ch = Instance.new("Frame")
-    ch.Name = "CH"
-    ch.Size = UDim2.fromOffset(20, 2)
-    ch.Position = UDim2.new(0.5, -10, 0.5, -1)
-    ch.BackgroundColor3 = Color3.fromRGB(50, 255, 100)
-    ch.BorderSizePixel = 0
-    ch.Parent = S.crosshairGui
-    local cv = Instance.new("Frame")
-    cv.Name = "CV"
-    cv.Size = UDim2.fromOffset(2, 20)
-    cv.Position = UDim2.new(0.5, -1, 0.5, -10)
-    cv.BackgroundColor3 = Color3.fromRGB(50, 255, 100)
-    cv.BorderSizePixel = 0
-    cv.Parent = S.crosshairGui
-    local dot = Instance.new("Frame")
-    dot.Size = UDim2.fromOffset(3, 3)
-    dot.Position = UDim2.new(0.5, -1.5, 0.5, -1.5)
-    dot.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
-    dot.BorderSizePixel = 0
-    dot.Parent = S.crosshairGui
-end
-
--- ============================================================
--- ROUND TIMER LABEL
--- ============================================================
-S.roundTimerLabel = Instance.new("TextLabel")
-S.roundTimerLabel.Name = "RoundTimer"
-S.roundTimerLabel.Size = UDim2.fromOffset(100, 32)
-S.roundTimerLabel.Position = UDim2.new(0.5, -50, 0, 20)
-S.roundTimerLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-S.roundTimerLabel.BackgroundTransparency = 0.3
-S.roundTimerLabel.BorderSizePixel = 0
-S.roundTimerLabel.Text = "2:30"
-S.roundTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-S.roundTimerLabel.TextSize = 20
-S.roundTimerLabel.Font = Enum.Font.GothamBold
-S.roundTimerLabel.Visible = false
-S.roundTimerLabel.ZIndex = 100
-S.roundTimerLabel.Parent = U.gui
-do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = S.roundTimerLabel end
-
--- ============================================================
--- DRAG / RESIZE (main menu)
+-- DRAG / RESIZE
 -- ============================================================
 local dragStart, dragStartPosition, resizeStart, resizeStartSize, reopenDragStart, reopenDragStartPosition
 
@@ -2243,7 +2572,6 @@ UserInputService.InputChanged:Connect(function(i)
     end
 end)
 
--- [FIX 3] Reopen only on click, not drag
 U.reopen.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
         S.reopenDragging = true
@@ -2294,6 +2622,10 @@ local function closeScript()
     pcall(function()
         for p, bg in pairs(S.playerDistBillboards) do if bg then bg:Destroy() end end
     end)
+    for _, t in ipairs(Players:GetPlayers()) do
+        pcall(clearTrail, t)
+    end
+    S.scriptClosed = true
     sendNotification("MM2 Menu", "Script closed.")
     pcall(function() U.gui:Destroy() end)
     pcall(function() S.crosshairGui:Destroy() end)
@@ -2411,18 +2743,17 @@ kbActions.turnOffAll = function()
 end
 
 -- ============================================================
--- INPUT HANDLER (keybinds + menu toggle + modifier key detection)
+-- INPUT HANDLER
 -- ============================================================
 local modifierKeys = {
-    [Enum.KeyCode.LeftAlt] = true,
-    [Enum.KeyCode.RightAlt] = true,
-    [Enum.KeyCode.LeftControl] = true,
-    [Enum.KeyCode.RightControl] = true,
+    [Enum.KeyCode.LeftAlt] = true, [Enum.KeyCode.RightAlt] = true,
+    [Enum.KeyCode.LeftControl] = true, [Enum.KeyCode.RightControl] = true,
     [Enum.KeyCode.LeftShift] = true,
 }
 local pendingModifier = nil
 
 UserInputService.InputBegan:Connect(function(i, processed)
+    if S.scriptClosed then return end
     if S.capturingKeybind then
         if i.KeyCode == Enum.KeyCode.Escape then endCapture() return end
         if S.capturingAction then S.keybinds[S.capturingAction] = i.KeyCode end
@@ -2439,6 +2770,7 @@ UserInputService.InputBegan:Connect(function(i, processed)
         return
     end
     if pendingModifier then pendingModifier = nil end
+    if not S.keybindsEnabled then return end
     for action, key in pairs(S.keybinds) do
         if i.KeyCode == key then
             local fn = kbActions[action]
@@ -2448,12 +2780,15 @@ UserInputService.InputBegan:Connect(function(i, processed)
 end)
 
 UserInputService.InputEnded:Connect(function(i)
+    if S.scriptClosed then return end
     if i.KeyCode == pendingModifier then
-        for action, key in pairs(S.keybinds) do
-            if i.KeyCode == key then
-                local fn = kbActions[action]
-                if fn then pcall(fn) end
-                break
+        if S.keybindsEnabled then
+            for action, key in pairs(S.keybinds) do
+                if i.KeyCode == key then
+                    local fn = kbActions[action]
+                    if fn then pcall(fn) end
+                    break
+                end
             end
         end
         pendingModifier = nil
@@ -2461,12 +2796,18 @@ UserInputService.InputEnded:Connect(function(i)
 end)
 
 RunService.Heartbeat:Connect(function()
+    if S.scriptClosed then return end
     local hue = (tick() * RAINBOW_SPEED) % 1
     local color = Color3.fromHSV(hue, 1, 1)
     U.frameStroke.Color = color
     U.reopenStroke.Color = color
     FP.stroke.Color = color
     U.titleGradient.Rotation = (tick() * 60) % 360
+    if S.crosshairOn and U.crosshairH and U.crosshairV and U.crosshairDot then
+        U.crosshairH.BackgroundColor3 = color
+        U.crosshairV.BackgroundColor3 = color
+        U.crosshairDot.BackgroundColor3 = Color3.fromHSV((hue + 0.5) % 1, 1, 1)
+    end
 end)
 
 getRoles()
@@ -2479,6 +2820,7 @@ task.spawn(function()
             updateHL()
             updateGunESP()
             updatePlayerDistance()
+            updateTrails()
             if S.autoKillAll and MurdererName == player.Name then killAllPlayers() end
             if S.autoGunTP then autoTPGunTop() end
             checkAutoChat()
