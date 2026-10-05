@@ -24,6 +24,8 @@ local ROLE_COLORS = {
 	Hero = Color3.fromRGB(255, 205, 50),
 }
 
+local GUN_COLOR = Color3.fromRGB(170, 90, 230) -- purple
+
 local noclip = false
 local infinityJump = false
 local flingOnTouch = false
@@ -53,6 +55,8 @@ local espEnabled = {
 	Sheriff = false,
 	Hero = false,
 }
+
+local gunESPEnabled = false
 
 local originalCollision = {}
 
@@ -689,7 +693,6 @@ local flyDownCorner = Instance.new("UICorner")
 flyDownCorner.CornerRadius = UDim.new(0, 7)
 flyDownCorner.Parent = flyDown
 
--- FIX: flySpeed and flyMaxSpeed were separate, so the slider did nothing.
 local function updateFlySpeed(value)
 	value = tonumber(value)
 	if not value then value = flySpeed end
@@ -1098,6 +1101,24 @@ createESPButton("Sheriff")
 createESPButton("Hero")
 
 --==================================================
+-- ITEM ESP SETTINGS  (Gun ESP)
+--==================================================
+
+createSectionTitle("ITEM ESP SETTINGS")
+
+local gunESPButton, gunESPIndicator = createToggle("GunESP", "Gun ESP")
+
+gunESPButton.MouseButton1Click:Connect(function()
+	gunESPEnabled = not gunESPEnabled
+	if gunESPEnabled then
+		gunESPButton.BackgroundColor3 = GUN_COLOR:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+		gunESPIndicator.BackgroundColor3 = GUN_COLOR
+	else
+		setToggleOff(gunESPButton, gunESPIndicator)
+	end
+end)
+
+--==================================================
 -- NOTIFIER SETTINGS
 --==================================================
 
@@ -1363,6 +1384,8 @@ local function teleportToGun()
 			targetPart = gunDrop
 		elseif gunDrop:IsA("Model") then
 			targetPart = gunDrop.PrimaryPart or gunDrop:FindFirstChildOfClass("BasePart")
+		elseif gunDrop:IsA("Tool") then
+			targetPart = gunDrop:FindFirstChild("Handle") or gunDrop:FindFirstChildOfClass("BasePart")
 		end
 
 		if targetPart then
@@ -1632,6 +1655,16 @@ local function resetAllToggles(silent)
 		end
 	end
 
+	if gunESPEnabled then
+		gunESPEnabled = false
+		setToggleOff(gunESPButton, gunESPIndicator)
+		for gun, _ in pairs(gunHighlights) do
+			local hl = gunHighlights[gun]
+			if hl then pcall(function() hl:Destroy() end) end
+		end
+		gunHighlights = {}
+	end
+
 	if autoNotifyRoles then
 		autoNotifyRoles = false
 		setToggleOff(autoNotifyButton, autoNotifyIndicator)
@@ -1716,8 +1749,23 @@ local function IsAlive(target)
 	return humanoid and humanoid.Health > 0
 end
 
--- FIX: clear every cached role + notification/chat sentinels. Used both
--- by the round-end detectors and (optionally) on hard resets.
+-- A role holder must be alive AND not in spawn/lobby.
+local function isRoleHolderValid(target)
+	if not target then return false end
+	if not target.Character then return false end
+	local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then return false end
+	if isPlayerInSpawn(target) then return false end
+	return true
+end
+
+local function isCachedRoleHolderValid(cachedName)
+	if not cachedName then return false end
+	local target = Players:FindFirstChild(cachedName)
+	if not target then return false end
+	return isRoleHolderValid(target)
+end
+
 local function resetRoleState()
 	MurdererName = nil
 	SheriffName = nil
@@ -1730,21 +1778,11 @@ local function resetRoleState()
 	noMurdererSince = nil
 end
 
--- FIX: validate a reported role before caching it. If the holder is dead
--- or no longer in the server, treat them as not holding the role. This is
--- what makes Hero/Sheriff transfer work: when the old Hero dies, the role
--- clears immediately, and the next player who picks up the gun becomes
--- the new Hero on the next poll.
 local function resolveRole(reportedName)
 	if not reportedName then return nil end
 	local targetPlayer = Players:FindFirstChild(reportedName)
 	if not targetPlayer then return nil end
-	local humanoid = targetPlayer.Character and targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-	if humanoid and humanoid.Health <= 0 then
-		-- Reported as this role but currently dead -> reject
-		return nil
-	end
-	-- Alive, or character not yet loaded (spawn window) -> accept
+	if not isRoleHolderValid(targetPlayer) then return nil end
 	return reportedName
 end
 
@@ -1793,16 +1831,11 @@ local function GetRoles()
 		elseif role == "Hero" then newHero = target.Name end
 	end
 
-	-- Reject dead/left reported roles
 	newMurderer = resolveRole(newMurderer)
 	newSheriff = resolveRole(newSheriff)
 	newHero = resolveRole(newHero)
 
-	-- === ROUND TRANSITION DETECTION ===
-
 	-- Detector A: murderer name changed -> new round.
-	-- Wipe the round-specific sub-roles so a stale sheriff/hero from the
-	-- previous round doesn't bleed into the new one.
 	if newMurderer and MurdererName and newMurderer ~= MurdererName then
 		SheriffName = nil
 		HeroName = nil
@@ -1824,25 +1857,28 @@ local function GetRoles()
 		end
 	end
 
-	-- === APPLY NAMES ===
-
 	if newMurderer then
 		MurdererName = newMurderer
+	elseif MurdererName and not isCachedRoleHolderValid(MurdererName) then
+		MurdererName = nil
+		lastNotifiedMurderer = nil
+		lastChatSentMurderer = nil
+		roundActive = false
 	end
 
 	if newSheriff then
 		SheriffName = newSheriff
-	elseif SheriffName and not Players:FindFirstChild(SheriffName) then
+	elseif SheriffName and not isCachedRoleHolderValid(SheriffName) then
 		SheriffName = nil
+		lastNotifiedSheriff = nil
 	end
 
 	if newHero then
 		HeroName = newHero
-	elseif HeroName and not Players:FindFirstChild(HeroName) then
+	elseif HeroName and not isCachedRoleHolderValid(HeroName) then
 		HeroName = nil
+		lastNotifiedHero = nil
 	end
-
-	-- === NOTIFICATIONS ===
 
 	if autoNotifyRoles then
 		if (MurdererName and MurdererName ~= lastNotifiedMurderer)
@@ -1869,7 +1905,9 @@ local function UpdateHighlights()
 			elseif HeroName and target.Name == HeroName then role = "Hero"
 			else role = "Innocent" end
 
-			if not IsAlive(target) then
+			local showRoleColor = IsAlive(target) and not isPlayerInSpawn(target)
+
+			if not showRoleColor then
 				if espEnabled.Innocent then
 					local deadColor = ROLE_COLORS.Innocent
 					highlight.FillColor = deadColor
@@ -1927,18 +1965,92 @@ end)
 
 Players.PlayerRemoving:Connect(function(target)
 	RemoveHighlight(target)
-	-- Also clear any cached role that belonged to this player
 	if MurdererName == target.Name then MurdererName = nil end
 	if SheriffName == target.Name then SheriffName = nil end
 	if HeroName == target.Name then HeroName = nil end
 end)
 
 --==================================================
+-- GUN ESP SYSTEM
+--==================================================
+
+local gunHighlights = {} -- [gunInstance] = Highlight
+local lastGunScan = 0
+local GUN_SCAN_INTERVAL = 0.5
+
+local function isGunHeldByPlayer(gun)
+	for _, p in ipairs(Players:GetPlayers()) do
+		local char = p.Character
+		if char and gun:IsDescendantOf(char) then
+			return true
+		end
+	end
+	return false
+end
+
+local function isDroppedGun(inst)
+	if not inst or not inst.Parent then return false end
+	if inst.Name ~= "Gun" and inst.Name ~= "GunDrop" then return false end
+	if not (inst:IsA("BasePart") or inst:IsA("Model") or inst:IsA("Tool")) then return false end
+	if isGunHeldByPlayer(inst) then return false end
+	return true
+end
+
+local function attachGunHighlight(gun)
+	if gunHighlights[gun] then return end
+	local hl = Instance.new("Highlight")
+	hl.Name = "GunESP"
+	hl.FillColor = GUN_COLOR
+	hl.OutlineColor = GUN_COLOR
+	hl.FillTransparency = 0.4
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = gun
+	gunHighlights[gun] = hl
+end
+
+local function removeGunHighlight(gun)
+	local hl = gunHighlights[gun]
+	if hl then pcall(function() hl:Destroy() end) end
+	gunHighlights[gun] = nil
+end
+
+local function clearAllGunHighlights()
+	for gun, _ in pairs(gunHighlights) do
+		removeGunHighlight(gun)
+	end
+end
+
+local function updateGunESP()
+	for gun, _ in pairs(gunHighlights) do
+		if not gun or not gun.Parent or not isDroppedGun(gun) then
+			removeGunHighlight(gun)
+		end
+	end
+
+	if not gunESPEnabled then
+		if next(gunHighlights) ~= nil then
+			clearAllGunHighlights()
+		end
+		return
+	end
+
+	local now = tick()
+	if now - lastGunScan < GUN_SCAN_INTERVAL then return end
+	lastGunScan = now
+
+	for _, inst in ipairs(workspace:GetDescendants()) do
+		if isDroppedGun(inst) then
+			if not gunHighlights[inst] then
+				attachGunHighlight(inst)
+			end
+		end
+	end
+end
+
+--==================================================
 -- OPTIONAL WORKSPACE ROUND SIGNAL (best-effort)
 --==================================================
--- Some MM2 builds expose a RoundActive-style BoolValue under a container
--- like workspace.Game / workspace.Round / workspace.GameState. If we find
--- one, use it as a hard round-end trigger to complement the debounce.
 
 local function tryHookRoundSignal()
 	local containerNames = { "Game", "Round", "GameState", "GameInfo", "RoundState" }
@@ -1965,7 +2077,6 @@ local function tryHookRoundSignal()
 end
 
 task.spawn(function()
-	-- Try immediately, then re-check if it appears later
 	if not tryHookRoundSignal() then
 		local tries = 0
 		while gui.Parent and tries < 60 do
@@ -2235,6 +2346,7 @@ end
 
 local function closeScript()
 	pcall(function() resetAllToggles(true) end)
+	pcall(clearAllGunHighlights)
 	sendNotification("MM2 Menu", "Script closed.")
 	pcall(function() gui:Destroy() end)
 end
@@ -2325,12 +2437,14 @@ end)
 
 GetRoles()
 UpdateHighlights()
+updateGunESP()
 
 task.spawn(function()
 	while gui.Parent do
 		pcall(function()
 			GetRoles()
 			UpdateHighlights()
+			updateGunESP()
 
 			if autoKillAll and MurdererName == player.Name then
 				killAllPlayers()
