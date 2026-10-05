@@ -37,7 +37,7 @@ local S = {
     killerTrailOn = false, sheriffTrailOn = false, heroTrailOn = false,
     cameraFollowMurderer = false,
     killSoundOn = false, autoPlayOn = false,
-    autoFarmOn = false, autoFarmDeaths = 0,
+    autoFarmOn = false,
     autoFarmBagFullNotified = false,
     currentFarmCoin = nil, currentCoinTPTime = 0,
     lastKnownMurderer = nil,
@@ -55,8 +55,8 @@ local S = {
     pendingNotify = false, pendingNotifySince = 0,
     capturingKeybind = false, capturingAction = nil,
     reopenDragDist = 0, hopping = false,
-    autoPlayLastRun = 0, lastCoinTP = 0,
-    -- Post bag full role actions
+    autoPlayLastRun = 0, lastRoleCheck = 0,
+    -- Post-bag-full role action fields
     postBagActionOn = false,
     postBagActionDone = false,
     lastBagFullNotified = 0,
@@ -155,8 +155,8 @@ U.frame.Parent = U.canvas
 do
     local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 12) c.Parent = U.frame
     U.frameStroke = Instance.new("UIStroke")
-    U.frameStroke.Color = Color3.fromRGB(55, 57, 65)
-    U.frameStroke.Thickness = 1
+    U.frameStroke.Color = Color3.fromRGB(255, 90, 90)
+    U.frameStroke.Thickness = 1.5
     U.frameStroke.Parent = U.frame
 end
 
@@ -262,7 +262,7 @@ U.reopen.Parent = U.gui
 do
     local c = Instance.new("UICorner") c.CornerRadius = UDim.new(1, 0) c.Parent = U.reopen
     U.reopenStroke = Instance.new("UIStroke")
-    U.reopenStroke.Color = Color3.fromRGB(80, 82, 90)
+    U.reopenStroke.Color = Color3.fromRGB(255, 90, 90)
     U.reopenStroke.Thickness = 2
     U.reopenStroke.Parent = U.reopen
 end
@@ -540,8 +540,8 @@ FP.panel.Parent = U.gui
 do
     local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 12) c.Parent = FP.panel
     FP.stroke = Instance.new("UIStroke")
-    FP.stroke.Color = Color3.fromRGB(55, 57, 65)
-    FP.stroke.Thickness = 1
+    FP.stroke.Color = Color3.fromRGB(255, 90, 90)
+    FP.stroke.Thickness = 1.5
     FP.stroke.Parent = FP.panel
 end
 
@@ -2752,23 +2752,6 @@ end
 -- ============================================================
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
-    pcall(getRoles)
-    pcall(updateHL)
-    pcall(updatePlayerDistance)
-    pcall(updateTrails)
-    pcall(updateGunESP)
-    pcall(checkAutoChat)
-    pcall(runAutoPlay)
-    if S.autoFarmOn then
-        pcall(autoFarmCoins)
-    end
-    if S.autoGunTP then
-        pcall(autoTPGunTop)
-    end
-end)
-
-RunService.Heartbeat:Connect(function()
-    if S.scriptClosed then return end
     if not S.killerAlarmOn or not MurdererName then
         S.lastAlarmDist = math.huge
         return
@@ -3107,44 +3090,21 @@ kbActions.gunESP = function()
     end
 end
 
-kbActions.murdererESP = function()
-    S.espEnabled.Murderer = not S.espEnabled.Murderer
-    local e = espButtons.Murderer
-    if e then
-        if S.espEnabled.Murderer then
-            e.Button.BackgroundColor3 = ROLE_COLORS.Murderer:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-            e.Indicator.BackgroundColor3 = ROLE_COLORS.Murderer
+local function toggleEspRole(role)
+    S.espEnabled[role] = not S.espEnabled[role]
+    if espButtons[role] then
+        if S.espEnabled[role] then
+            espButtons[role].Button.BackgroundColor3 = ROLE_COLORS[role]:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+            espButtons[role].Indicator.BackgroundColor3 = ROLE_COLORS[role]
         else
-            setOff(e.Button, e.Indicator)
+            setOff(espButtons[role].Button, espButtons[role].Indicator)
         end
     end
 end
 
-kbActions.sheriffESP = function()
-    S.espEnabled.Sheriff = not S.espEnabled.Sheriff
-    local e = espButtons.Sheriff
-    if e then
-        if S.espEnabled.Sheriff then
-            e.Button.BackgroundColor3 = ROLE_COLORS.Sheriff:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-            e.Indicator.BackgroundColor3 = ROLE_COLORS.Sheriff
-        else
-            setOff(e.Button, e.Indicator)
-        end
-    end
-end
-
-kbActions.innocentESP = function()
-    S.espEnabled.Innocent = not S.espEnabled.Innocent
-    local e = espButtons.Innocent
-    if e then
-        if S.espEnabled.Innocent then
-            e.Button.BackgroundColor3 = ROLE_COLORS.Innocent:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-            e.Indicator.BackgroundColor3 = ROLE_COLORS.Innocent
-        else
-            setOff(e.Button, e.Indicator)
-        end
-    end
-end
+kbActions.murdererESP = function() toggleEspRole("Murderer") end
+kbActions.sheriffESP = function() toggleEspRole("Sheriff") end
+kbActions.innocentESP = function() toggleEspRole("Innocent") end
 
 kbActions.antiVoid = function()
     S.antiVoidEnabled = not S.antiVoidEnabled
@@ -3155,33 +3115,80 @@ kbActions.turnOffAll = function()
     resetAllToggles()
 end
 
+-- ============================================================
+-- KEYBIND INPUT HANDLER
+-- ============================================================
 UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
     if S.scriptClosed then return end
     if S.capturingKeybind then
         if input.KeyCode == Enum.KeyCode.Escape then
             endCapture()
             return
         end
-        if input.KeyCode ~= Enum.KeyCode.Unknown then
-            local id = S.capturingAction
-            if id then
-                S.keybinds[id] = input.KeyCode
-            end
-            endCapture()
+        if input.KeyCode ~= Enum.KeyCode.Unknown and S.capturingAction then
+            S.keybinds[S.capturingAction] = input.KeyCode
         end
+        endCapture()
+        return
+    end
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        if S.menuVisible then minimizeMenu() else showMenu() end
         return
     end
     if not S.keybindsEnabled then return end
-    if input.KeyCode == Enum.KeyCode.RightShift then
-        if not S.menuVisible then showMenu() else minimizeMenu() end
-        return
-    end
-    for id, key in pairs(S.keybinds) do
-        if key == input.KeyCode then
-            local fn = kbActions[id]
+    for action, key in pairs(S.keybinds) do
+        if input.KeyCode == key then
+            local fn = kbActions[action]
             if fn then pcall(fn) end
+            break
         end
+    end
+end)
+
+-- ============================================================
+-- RAINBOW ANIMATION (restored - borders + title + crosshair)
+-- ============================================================
+RunService.Heartbeat:Connect(function()
+    if S.scriptClosed then return end
+    local hue = (tick() * RAINBOW_SPEED) % 1
+    local color = Color3.fromHSV(hue, 1, 1)
+    if U.frameStroke then U.frameStroke.Color = color end
+    if U.reopenStroke then U.reopenStroke.Color = color end
+    if FP.stroke then FP.stroke.Color = color end
+    if U.titleGradient then U.titleGradient.Rotation = (tick() * 60) % 360 end
+    if S.crosshairOn and U.crosshairH and U.crosshairV and U.crosshairDot then
+        U.crosshairH.BackgroundColor3 = color
+        U.crosshairV.BackgroundColor3 = color
+        U.crosshairDot.BackgroundColor3 = Color3.fromHSV((hue + 0.5) % 1, 1, 1)
+    end
+end)
+
+-- ============================================================
+-- MAIN UPDATE LOOP (this is what makes features actually work!)
+-- ============================================================
+getRoles()
+updateHL()
+updateGunESP()
+
+task.spawn(function()
+    while U.gui.Parent do
+        pcall(function()
+            if tick() - S.lastRoleCheck >= 0.25 then
+                S.lastRoleCheck = tick()
+                getRoles()
+            end
+            updateHL()
+            updateGunESP()
+            updatePlayerDistance()
+            updateTrails()
+            if S.autoKillAll and MurdererName == player.Name then killAllPlayers() end
+            if S.autoGunTP then autoTPGunTop() end
+            if S.autoFarmOn then autoFarmCoins() end
+            runAutoPlay()
+            checkAutoChat()
+        end)
+        task.wait(0.25)
     end
 end)
 
