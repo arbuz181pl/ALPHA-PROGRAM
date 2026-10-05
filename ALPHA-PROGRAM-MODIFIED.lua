@@ -37,7 +37,7 @@ local S = {
     menuOpacity = 100,
     murdererTrailOn = false, sheriffTrailOn = false, heroTrailOn = false,
     cameraFollowMurderer = false,
-    killSoundOn = false,
+    killSoundOn = false, sheriffHitSoundOn = false,
     autoFarmOn = false,
     autoFarmBagFullNotified = false,
     lastKnownMurderer = nil,
@@ -669,14 +669,29 @@ makeEspBtn("Innocent")
 
 createSectionTitle("SELF ESP")
 
-U.selfRainbowBtn, U.selfRainbowInd = createToggle("RainbowSelfESP", "Rainbow")
+U.selfRainbowBtn, U.selfRainbowInd = createToggle("SelfESP", "Self ESP")
 U.selfRainbowBtn.MouseButton1Click:Connect(function()
     S.rainbowSelfESP = not S.rainbowSelfESP
     if S.rainbowSelfESP then
         U.selfRainbowBtn.BackgroundColor3 = Color3.fromRGB(60, 45, 70)
         U.selfRainbowInd.BackgroundColor3 = Color3.fromRGB(210, 110, 255)
+        if not U.selfRainbowBtn:FindFirstChild("RainbowGradient") then
+            local g = Instance.new("UIGradient")
+            g.Name = "RainbowGradient"
+            g.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 90, 90)),
+                ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 220, 90)),
+                ColorSequenceKeypoint.new(0.4, Color3.fromRGB(90, 255, 120)),
+                ColorSequenceKeypoint.new(0.6, Color3.fromRGB(90, 200, 255)),
+                ColorSequenceKeypoint.new(0.8, Color3.fromRGB(210, 110, 255)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 90, 90)),
+            })
+            g.Parent = U.selfRainbowBtn
+        end
     else
         setOff(U.selfRainbowBtn, U.selfRainbowInd)
+        local g = U.selfRainbowBtn:FindFirstChild("RainbowGradient")
+        if g then g:Destroy() end
         local c = player.Character
         if c then
             local h = c:FindFirstChild("SelfRainbowESP")
@@ -989,15 +1004,25 @@ RunService.RenderStepped:Connect(function()
     local c = player.Character
     if not c then stopFly() return end
     local r = c:FindFirstChild("HumanoidRootPart")
+    local hum = c:FindFirstChildOfClass("Humanoid")
     local cam = workspace.CurrentCamera
-    if not r or not cam then return end
+    if not r or not cam or not hum then return end
     local dir = Vector3.zero
-    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.Space) or flyUpFlag == 1 then dir = dir + Vector3.new(0, 1, 0) end
-    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or flyDownFlag == -1 then dir = dir - Vector3.new(0, 1, 0) end
+    if UserInputService.KeyboardEnabled then
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) or flyUpFlag == 1 then dir = dir + Vector3.new(0, 1, 0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or flyDownFlag == -1 then dir = dir - Vector3.new(0, 1, 0) end
+    end
+    if dir.Magnitude < 0.1 then
+        local move = hum.MoveDirection
+        if move.Magnitude > 0.1 then
+            local flat = Vector3.new(move.X, 0, move.Z)
+            dir = cam.CFrame.LookVector * flat.Z + cam.CFrame.RightVector * flat.X
+        end
+    end
     if dir.Magnitude > 0 then
         flyBV.Velocity = dir.Unit * S.flySpeed
     else
@@ -1628,6 +1653,12 @@ U.killSoundBtn.MouseButton1Click:Connect(function()
     if S.killSoundOn then setOn(U.killSoundBtn, U.killSoundInd) else setOff(U.killSoundBtn, U.killSoundInd) end
 end)
 
+U.sheriffHitSoundBtn, U.sheriffHitSoundInd = createToggle("SheriffHitSound", "Sheriff Hit Sound")
+U.sheriffHitSoundBtn.MouseButton1Click:Connect(function()
+    S.sheriffHitSoundOn = not S.sheriffHitSoundOn
+    if S.sheriffHitSoundOn then setOn(U.sheriffHitSoundBtn, U.sheriffHitSoundInd) else setOff(U.sheriffHitSoundBtn, U.sheriffHitSoundInd) end
+end)
+
 -- ============================================================
 -- SHERIFF TAB
 -- ============================================================
@@ -1671,15 +1702,15 @@ local function shootMurderer()
     end
 
     local killed = false
-    for attempt = 1, 4 do
+    for attempt = 1, 6 do
         local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
         myRoot = c:FindFirstChild("HumanoidRootPart")
         if not targetRoot or not myRoot then break end
 
         local targetPos = targetRoot.Position
-        local standPos = targetPos + (targetRoot.CFrame.LookVector * 3) + Vector3.new(0, 2, 0)
+        local standPos = targetPos + (targetRoot.CFrame.LookVector * 2) + Vector3.new(0, 1, 0)
         myRoot.CFrame = CFrame.new(standPos, targetPos)
-        task.wait(0.08)
+        task.wait(0.05)
 
         local fired = false
         for _, name in ipairs({"Shoot", "Fire", "FireGun", "ShootGun", "ClientShoot"}) do
@@ -1703,7 +1734,7 @@ local function shootMurderer()
 
         pcall(function() gun:Activate() end)
 
-        task.wait(0.25)
+        task.wait(0.15)
 
         local h = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
         if not h or h.Health <= 0 then killed = true break end
@@ -2136,6 +2167,7 @@ local function resetAllToggles(silent)
     if S.sheriffTrailOn then S.sheriffTrailOn = false setOff(U.sheriffTrailBtn, U.sheriffTrailInd) end
     if S.heroTrailOn then S.heroTrailOn = false setOff(U.heroTrailBtn, U.heroTrailInd) end
     if S.killSoundOn then S.killSoundOn = false setOff(U.killSoundBtn, U.killSoundInd) end
+    if S.sheriffHitSoundOn then S.sheriffHitSoundOn = false setOff(U.sheriffHitSoundBtn, U.sheriffHitSoundInd) end
     if S.autoFarmOn then
         S.autoFarmOn = false
         setOff(U.autoFarmBtn, U.autoFarmInd)
@@ -2421,9 +2453,10 @@ local function autoFarmCoins()
     S.currentFarmCoin = nearest
     S.currentFarmTAt = now
 
-    -- Small random jitter so every teleport has slightly different coords
+    -- Fly under map to collect coin while hidden
+    local safeY = getSafeUnderMapY()
     local jitter = Vector3.new((math.random() - 0.5) * 2, 0, (math.random() - 0.5) * 2)
-    hrp.CFrame = CFrame.new(nearest.Position + Vector3.new(0, 2, 0) + jitter)
+    hrp.CFrame = CFrame.new(nearest.Position.X + jitter.X, safeY, nearest.Position.Z + jitter.Z)
     hrp.Velocity = Vector3.zero
     hrp.AssemblyLinearVelocity = Vector3.zero
 end
@@ -2457,16 +2490,15 @@ RunService.Heartbeat:Connect(function()
         if tick() - S.lastFarmTP < 0.5 then return end
         if tick() - S.lastFleeTP < S.FLEE_TP_INTERVAL then return end
         S.lastFleeTP = tick()
-        S.fleeUntil = tick() + 1.5
+        S.fleeUntil = tick() + 2.0
         S.currentFarmCoin = nil
-        local awayDir = (hrpXZ - mrXZ)
-        if awayDir.Magnitude < 0.1 then awayDir = Vector2.new(1, 0) end
-        awayDir = awayDir.Unit
-        local safePos = hrp.Position + Vector3.new(awayDir.X * 50, 0, awayDir.Y * 50)
-        hrp.CFrame = CFrame.new(safePos)
-        hrp.Velocity = Vector3.zero
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        sendNotification("Auto Farm", "Murderer within " .. math.floor(distXZ) .. " studs — teleporting away!", SOUNDS.alert)
+        anchorUnderMap(hrp)
+        sendNotification("Auto Farm", "Murderer within " .. math.floor(distXZ) .. " studs — hiding under map!", SOUNDS.alert)
+    end
+
+    if S.fleeUntil > tick() and distXZ > S.FLEE_KEEP_DIST then
+        S.fleeUntil = 0
+        if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
     end
 end)
 
@@ -2765,9 +2797,14 @@ local function hookKillSound(t)
     local hum = t.Character:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     hum.Died:Connect(function()
-        if not S.killSoundOn then return end
-        if MurdererName ~= player.Name and SheriffName ~= player.Name then return end
-        playSound(SOUNDS.success, 1.5)
+        if S.killSoundOn then
+            if MurdererName == player.Name or SheriffName == player.Name then
+                playSound(SOUNDS.success, 1.5)
+            end
+        end
+        if S.sheriffHitSoundOn and SheriffName == player.Name and t.Name == MurdererName then
+            playSound(SOUNDS.success, 1.5)
+        end
     end)
 end
 
@@ -2824,10 +2861,8 @@ local function isDroppedGun(i)
         local bp = p:FindFirstChild("Backpack")
         if bp and i:IsDescendantOf(bp) then return false end
     end
-    local par = i.Parent
-    if par == workspace then return true end
-    if par and par.Parent == workspace and (par:IsA("Folder") or par:IsA("Model")) and (par.Name == "GunDrop" or par.Name == "Gun") then return true end
-    return false
+    if i.Parent ~= workspace then return false end
+    return true
 end
 
 local function attachGun(g)
