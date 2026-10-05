@@ -1,4 +1,4 @@
---// MM2 MENU BY ARBUZ v1.2
+--// MM2 MENU BY ARBUZ v1.3
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -26,15 +26,16 @@ local S = {
     autoSendMurdererChat = false, autoSendSheriffChat = false, antiVoidEnabled = false,
     antiFlingEnabled = false, antiAfkEnabled = false, antiAfkConn = nil,
     playerDistanceOn = false, playerDistBillboards = {},
-    killerAlarmOn = false, lastAlarmDist = math.huge,
+    murdererAlarmOn = false, lastAlarmDist = math.huge,
     crosshairOn = false, crosshairGui = nil,
+    rainbowSelfESP = false,
     keybindsEnabled = true, scriptClosed = false,
     lastTouchPos = nil,
     gunDropAlert = false, lastGunDropped = false,
     notifyRoundStart = false, notifyRoundEnd = false,
     playerJoinLeaveNotify = false,
     menuOpacity = 100,
-    killerTrailOn = false, sheriffTrailOn = false, heroTrailOn = false,
+    murdererTrailOn = false, sheriffTrailOn = false, heroTrailOn = false,
     cameraFollowMurderer = false,
     killSoundOn = false, autoPlayOn = false,
     autoFarmOn = false,
@@ -59,15 +60,17 @@ local S = {
     lastBagFullNotified = 0,
     safeSpot = nil,
     BAG_FULL_THRESHOLD = 40,
-    -- Auto farm fast-mode state
+    -- Auto farm state
     recentCoins = {},
     fleeUntil = 0,
     FLEE_TRIGGER_DIST = 8,
     FLEE_KEEP_DIST = 25,
-    -- Teleport throttling (anti-kick)
+    -- Teleport pacing
+    currentFarmCoin = nil,
+    currentFarmTAt = 0,
     lastFarmTP = 0,
     lastFleeTP = 0,
-    FARM_TP_INTERVAL = 0.4,
+    FARM_TP_INTERVAL = 0.6,
     FLEE_TP_INTERVAL = 1.2,
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
@@ -113,10 +116,7 @@ local lastAutoGunTP = 0
 local currentLayoutOrder = 0
 local currentParent = nil
 
--- Gun-TP under-map anchor (used by Auto Gun TP, Auto Farm flee, and referenced by Anti-Void)
 local gunTpAnchor = nil
-
--- Speedhack bypass — BodyVelocity driven, WalkSpeed stays at 16 so server never flags
 local speedBV = nil
 
 local function playSound(id, vol)
@@ -186,7 +186,7 @@ U.title = Instance.new("TextLabel")
 U.title.Size = UDim2.new(1, -120, 1, 0)
 U.title.Position = UDim2.fromOffset(10, 0)
 U.title.BackgroundTransparency = 1
-U.title.Text = "MM2 MENU BY ARBUZ v1.2"
+U.title.Text = "MM2 MENU BY ARBUZ v1.3"
 U.title.TextColor3 = Color3.fromRGB(255, 255, 255)
 U.title.TextSize = 13
 U.title.Font = Enum.Font.GothamBold
@@ -325,7 +325,8 @@ end
 
 U.tabFrames = {}
 U.tabs = {}
-local tabNames = {"Movement", "ESP", "Notifier", "Murderer", "Sheriff", "Teleport", "Keybinds", "Settings", "Utility", "Config"}
+-- IMPORTANT: Config first (fast access), then visual/movement, then role-specific, then settings
+local tabNames = {"Config", "ESP", "Movement", "Utility", "Teleport", "Murderer", "Sheriff", "Notifier", "Keybinds", "Settings"}
 
 for _, tabName in ipairs(tabNames) do
     local fr = Instance.new("ScrollingFrame")
@@ -396,11 +397,8 @@ for _, tabName in ipairs(tabNames) do
     tb.MouseButton1Click:Connect(function() switchTab(tabName) end)
 end
 
-switchTab("Movement")
+switchTab("Config")
 
--- ============================================================
--- SEARCH
--- ============================================================
 U.searchBox:GetPropertyChangedSignal("Text"):Connect(function()
     local q = U.searchBox.Text:lower()
     local fr = U.tabFrames[U.activeTab]
@@ -516,15 +514,78 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- MOVEMENT TAB
+-- CONFIG TAB (TOP — fast access)
 -- ============================================================
-currentParent = U.tabFrames.Movement
-createSectionTitle("MOVEMENT")
+currentParent = U.tabFrames.Config
+createSectionTitle("QUICK TOGGLES")
 
-U.noclipBtn, U.noclipInd = createToggle("Noclip", "Noclip")
-U.noclipBtn.MouseButton1Click:Connect(function()
-    S.noclip = not S.noclip
-    if S.noclip then
+U.autoFarmBtn, U.autoFarmInd = createToggle("AutoFarm", "Auto Farm (Coins + Role Action)")
+U.autoFarmBtn.MouseButton1Click:Connect(function()
+    S.autoFarmOn = not S.autoFarmOn
+    if S.autoFarmOn then
+        setOn(U.autoFarmBtn, U.autoFarmInd)
+        if not S.antiAfkEnabled then
+            S.antiAfkEnabled = true
+            setOn(U.afkBtn, U.afkInd)
+            if S.antiAfkConn then S.antiAfkConn:Disconnect() end
+            S.antiAfkConn = player.Idled:Connect(function()
+                local VU = game:GetService("VirtualUser")
+                VU:CaptureController()
+                VU:ClickButton2(Vector2.new())
+            end)
+        end
+        S.autoFarmBagFullNotified = false
+        S.postBagActionDone = false
+        S.safeSpot = nil
+        S.fleeUntil = 0
+        S.recentCoins = {}
+        S.currentFarmCoin = nil
+        S.lastFarmTP = 0
+        S.lastFleeTP = 0
+        sendNotification("MM2 Menu", "Auto Farm ON", SOUNDS.success)
+    else
+        setOff(U.autoFarmBtn, U.autoFarmInd)
+        S.postBagActionDone = false
+        S.safeSpot = nil
+        S.fleeUntil = 0
+        S.recentCoins = {}
+        S.currentFarmCoin = nil
+        if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
+        sendNotification("MM2 Menu", "Auto Farm OFF")
+    end
+end)
+
+U.pvpPresetBtn = createActionButton("PvpPreset", "Apply PVP Ready Preset")
+U.pvpPresetBtn.BackgroundColor3 = Color3.fromRGB(45, 65, 45)
+U.pvpPresetBtn.MouseButton1Click:Connect(function()
+    if not S.antiAfkEnabled then
+        S.antiAfkEnabled = true
+        setOn(U.afkBtn, U.afkInd)
+        if S.antiAfkConn then S.antiAfkConn:Disconnect() end
+        S.antiAfkConn = player.Idled:Connect(function()
+            local VU = game:GetService("VirtualUser")
+            VU:CaptureController()
+            VU:ClickButton2(Vector2.new())
+        end)
+    end
+    if not S.antiVoidEnabled then S.antiVoidEnabled = true setOn(U.avBtn, U.avInd) end
+    if not S.antiFlingEnabled then S.antiFlingEnabled = true setOn(U.afBtn, U.afInd) end
+    for r, st in pairs(S.espEnabled) do
+        if not st then
+            S.espEnabled[r] = true
+            if espButtons[r] then
+                espButtons[r].Button.BackgroundColor3 = ROLE_COLORS[r]:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+                espButtons[r].Indicator.BackgroundColor3 = ROLE_COLORS[r]
+            end
+        end
+    end
+    if not S.gunESPEnabled then
+        S.gunESPEnabled = true
+        U.gunBtn.BackgroundColor3 = GUN_COLOR:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+        U.gunInd.BackgroundColor3 = GUN_COLOR
+    end
+    if not S.noclip then
+        S.noclip = true
         setOn(U.noclipBtn, U.noclipInd)
         S.originalCollision = {}
         if player.Character then
@@ -535,14 +596,133 @@ U.noclipBtn.MouseButton1Click:Connect(function()
                 end
             end
         end
-    else
-        setOff(U.noclipBtn, U.noclipInd)
-        for o, v in pairs(S.originalCollision) do
-            if o and o.Parent then o.CanCollide = v end
+    end
+    if not S.autoNotifyRoles then S.autoNotifyRoles = true setOn(U.autoNotBtn, U.autoNotInd) end
+    if not S.autoKillAll then S.autoKillAll = true setOn(U.autoKillBtn, U.autoKillInd) end
+    if not S.murdererAlarmOn then
+        S.murdererAlarmOn = true
+        S.lastAlarmDist = math.huge
+        setOn(U.murdererAlarmBtn, U.murdererAlarmInd)
+    end
+    if not S.crosshairOn then
+        S.crosshairOn = true
+        setOn(U.crosshairBtn, U.crosshairInd)
+        if S.crosshairGui then S.crosshairGui.Enabled = true end
+    end
+    if not S.gunDropAlert then S.gunDropAlert = true setOn(U.gunAlertBtn, U.gunAlertInd) end
+    if not S.notifyRoundStart then S.notifyRoundStart = true setOn(U.rStartBtn, U.rStartInd) end
+    if not S.notifyRoundEnd then S.notifyRoundEnd = true setOn(U.rEndBtn, U.rEndInd) end
+    if not S.playerJoinLeaveNotify then S.playerJoinLeaveNotify = true setOn(U.plBtn, U.plInd) end
+    if not S.killSoundOn then S.killSoundOn = true setOn(U.killSoundBtn, U.killSoundInd) end
+    sendNotification("MM2 Menu", "PVP Ready preset applied")
+end)
+
+createSectionTitle("AUTO FARM INFO")
+local afInfo = Instance.new("TextLabel")
+afInfo.Size = UDim2.new(1, 0, 0, 140)
+afInfo.BackgroundTransparency = 1
+afInfo.Text = "Auto Farm teleports to coins and forces Anti AFK on.\nWhen your bag hits 40 coins it does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab gun & shoot, else safe spot\n\nIf murderer gets within 8 studs, instantly hides under map\nuntil they leave.\n\nTeleports paced at ~1.5/sec to avoid anti-cheat kicks."
+afInfo.TextColor3 = Color3.fromRGB(150, 153, 165)
+afInfo.TextSize = 11
+afInfo.Font = Enum.Font.Gotham
+afInfo.TextXAlignment = Enum.TextXAlignment.Left
+afInfo.TextYAlignment = Enum.TextYAlignment.Top
+afInfo.LayoutOrder = getLayoutOrder()
+afInfo.Parent = currentParent
+
+createSectionTitle("PRESET INFO")
+local pInfo = Instance.new("TextLabel")
+pInfo.Size = UDim2.new(1, 0, 0, 170)
+pInfo.BackgroundTransparency = 1
+pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Murderer Alarm (30 studs)\n- Rainbow Crosshair\n- Gun Drop Alert\n- Round Start / End Notify\n- Player Join/Leave Alerts\n- Kill Sound"
+pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
+pInfo.TextSize = 11
+pInfo.Font = Enum.Font.Gotham
+pInfo.TextXAlignment = Enum.TextXAlignment.Left
+pInfo.TextYAlignment = Enum.TextYAlignment.Top
+pInfo.LayoutOrder = getLayoutOrder()
+pInfo.Parent = currentParent
+
+-- ============================================================
+-- ESP TAB
+-- ============================================================
+currentParent = U.tabFrames.ESP
+createSectionTitle("ROLE ESP (TOP PRIORITY)")
+
+local function makeEspBtn(role)
+    local b, i = createToggle(role .. "ESP", role .. " ESP")
+    espButtons[role] = {Button = b, Indicator = i}
+    b.MouseButton1Click:Connect(function()
+        S.espEnabled[role] = not S.espEnabled[role]
+        if S.espEnabled[role] then
+            b.BackgroundColor3 = ROLE_COLORS[role]:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+            i.BackgroundColor3 = ROLE_COLORS[role]
+        else
+            setOff(b, i)
         end
-        S.originalCollision = {}
+    end)
+end
+makeEspBtn("Murderer")
+makeEspBtn("Sheriff")
+makeEspBtn("Hero")
+makeEspBtn("Innocent")
+
+createSectionTitle("SELF ESP")
+
+U.selfRainbowBtn, U.selfRainbowInd = createToggle("RainbowSelfESP", "Rainbow ESP (yourself)")
+U.selfRainbowBtn.MouseButton1Click:Connect(function()
+    S.rainbowSelfESP = not S.rainbowSelfESP
+    if S.rainbowSelfESP then
+        U.selfRainbowBtn.BackgroundColor3 = Color3.fromRGB(60, 45, 70)
+        U.selfRainbowInd.BackgroundColor3 = Color3.fromRGB(210, 110, 255)
+    else
+        setOff(U.selfRainbowBtn, U.selfRainbowInd)
+        local c = player.Character
+        if c then
+            local h = c:FindFirstChild("SelfRainbowESP")
+            if h then h:Destroy() end
+        end
     end
 end)
+
+createSectionTitle("ITEM ESP")
+
+U.gunBtn, U.gunInd = createToggle("GunESP", "Gun ESP")
+U.gunBtn.MouseButton1Click:Connect(function()
+    S.gunESPEnabled = not S.gunESPEnabled
+    if S.gunESPEnabled then
+        U.gunBtn.BackgroundColor3 = GUN_COLOR:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+        U.gunInd.BackgroundColor3 = GUN_COLOR
+    else
+        setOff(U.gunBtn, U.gunInd)
+        for gun, hl in pairs(S.gunHighlights) do
+            if hl then pcall(function() hl:Destroy() end) end
+        end
+        S.gunHighlights = {}
+    end
+end)
+
+createSectionTitle("PLAYER INFO")
+
+U.distBtn, U.distInd = createToggle("PlayerDistance", "Player Distance (studs)")
+U.distBtn.MouseButton1Click:Connect(function()
+    S.playerDistanceOn = not S.playerDistanceOn
+    if S.playerDistanceOn then
+        setOn(U.distBtn, U.distInd)
+    else
+        setOff(U.distBtn, U.distInd)
+        for p, bg in pairs(S.playerDistBillboards) do
+            if bg then bg:Destroy() end
+        end
+        S.playerDistBillboards = {}
+    end
+end)
+
+-- ============================================================
+-- MOVEMENT TAB
+-- ============================================================
+currentParent = U.tabFrames.Movement
+createSectionTitle("MOVEMENT")
 
 U.flyBtn, U.flyInd = createToggle("Fly", "Fly")
 
@@ -826,71 +1006,7 @@ FP.up.MouseButton1Up:Connect(function() flyUpFlag = 0 end)
 FP.down.MouseButton1Down:Connect(function() flyDownFlag = -1 end)
 FP.down.MouseButton1Up:Connect(function() flyDownFlag = 0 end)
 
-U.infBtn, U.infInd = createToggle("InfinityJump", "Infinity Jump")
-U.infBtn.MouseButton1Click:Connect(function()
-    S.infinityJump = not S.infinityJump
-    if S.infinityJump then setOn(U.infBtn, U.infInd) else setOff(U.infBtn, U.infInd) end
-end)
-UserInputService.JumpRequest:Connect(function()
-    if not S.infinityJump then return end
-    local c = player.Character
-    if not c then return end
-    local h = c:FindFirstChildOfClass("Humanoid")
-    if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
-end)
-
-U.f3Btn, U.f3Ind = createToggle("FlingOnTouch", "Fling 3rd party")
-U.f3Btn.MouseButton1Click:Connect(function()
-    S.flingThirdParty = not S.flingThirdParty
-    if S.flingThirdParty then
-        U.f3Btn.BackgroundColor3 = Color3.fromRGB(70, 45, 35)
-        U.f3Ind.BackgroundColor3 = Color3.fromRGB(230, 100, 55)
-        local ok = pcall(function()
-            loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Ultimate-Fling-GUI-41909"))()
-        end)
-        if not ok then sendNotification("MM2 Menu", "Failed to load 3rd party fling script.") end
-    else
-        setOff(U.f3Btn, U.f3Ind)
-    end
-end)
-
-local function flingLoop()
-    local lp = player
-    local c, hrp, vel, movel = nil, nil, nil, 0.1
-    while S.flingTouchActive do
-        RunService.Heartbeat:Wait()
-        c = lp.Character
-        hrp = c and c:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            vel = hrp.Velocity
-            hrp.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
-            RunService.RenderStepped:Wait()
-            hrp.Velocity = vel
-            RunService.Stepped:Wait()
-            hrp.Velocity = vel + Vector3.new(0, movel, 0)
-            movel = -movel
-        end
-    end
-end
-
-U.fib, U.fii = createToggle("FlingOnTouchIntegrated", "Fling On Touch")
-U.fib.MouseButton1Click:Connect(function()
-    S.flingOnTouch = not S.flingOnTouch
-    if S.flingOnTouch then
-        U.fib.BackgroundColor3 = Color3.fromRGB(70, 45, 35)
-        U.fii.BackgroundColor3 = Color3.fromRGB(230, 100, 55)
-        S.flingTouchActive = true
-        S.flingTouchThread = coroutine.create(flingLoop)
-        coroutine.resume(S.flingTouchThread)
-    else
-        setOff(U.fib, U.fii)
-        S.flingTouchActive = false
-    end
-end)
-
-createSectionTitle("SPEEDHACK (Anti-Kick)")
-
-U.shBtn, U.shInd = createToggle("Speedhack", "Speedhack")
+U.shBtn, U.shInd = createToggle("Speedhack", "Speedhack (Anti-Kick)")
 U.shBtn.MouseButton1Click:Connect(function()
     S.speedhackEnabled = not S.speedhackEnabled
     if S.speedhackEnabled then
@@ -899,7 +1015,7 @@ U.shBtn.MouseButton1Click:Connect(function()
         local r = c and c:FindFirstChild("HumanoidRootPart")
         local h = c and c:FindFirstChildOfClass("Humanoid")
         if r and h then
-            h.WalkSpeed = 16  -- keep default so server anti-cheat sees normal speed
+            h.WalkSpeed = 16
             if speedBV then speedBV:Destroy() end
             speedBV = Instance.new("BodyVelocity")
             speedBV.MaxForce = Vector3.new(9e9, 0, 9e9)
@@ -963,7 +1079,7 @@ U.shLbl = Instance.new("TextLabel")
 U.shLbl.Size = UDim2.new(1, -145, 0, 32)
 U.shLbl.Position = UDim2.fromOffset(145, 0)
 U.shLbl.BackgroundTransparency = 1
-U.shLbl.Text = "Speed (max 60 — anti-kick)"
+U.shLbl.Text = "Speed (max 60)"
 U.shLbl.TextColor3 = Color3.fromRGB(150, 153, 165)
 U.shLbl.TextSize = 11
 U.shLbl.Font = Enum.Font.GothamBold
@@ -972,7 +1088,6 @@ U.shLbl.Parent = U.shRow
 
 local function updateSH(v)
     v = tonumber(v) or S.speedhackSpeed
-    -- Cap at 60 to stay under MM2 anti-cheat velocity detection
     v = math.clamp(math.floor(v), 1, 60)
     S.speedhackSpeed = v
     U.shBox.Text = tostring(v)
@@ -981,99 +1096,652 @@ U.shMinus.MouseButton1Click:Connect(function() updateSH(S.speedhackSpeed - 5) en
 U.shPlus.MouseButton1Click:Connect(function() updateSH(S.speedhackSpeed + 5) end)
 U.shBox.FocusLost:Connect(function() updateSH(U.shBox.Text) end)
 
--- Speedhack driver — BodyVelocity on HRP in the direction the player is moving
-RunService.RenderStepped:Connect(function()
-    if not S.speedhackEnabled then return end
-    -- Don't fight Fly
-    if S.flyEnabled then
-        if speedBV then speedBV.Velocity = Vector3.zero end
-        return
+U.noclipBtn, U.noclipInd = createToggle("Noclip", "Noclip")
+U.noclipBtn.MouseButton1Click:Connect(function()
+    S.noclip = not S.noclip
+    if S.noclip then
+        setOn(U.noclipBtn, U.noclipInd)
+        S.originalCollision = {}
+        if player.Character then
+            for _, o in ipairs(player.Character:GetDescendants()) do
+                if o:IsA("BasePart") then
+                    S.originalCollision[o] = o.CanCollide
+                    o.CanCollide = false
+                end
+            end
+        end
+    else
+        setOff(U.noclipBtn, U.noclipInd)
+        for o, v in pairs(S.originalCollision) do
+            if o and o.Parent then o.CanCollide = v end
+        end
+        S.originalCollision = {}
     end
+end)
+
+U.infBtn, U.infInd = createToggle("InfinityJump", "Infinity Jump")
+U.infBtn.MouseButton1Click:Connect(function()
+    S.infinityJump = not S.infinityJump
+    if S.infinityJump then setOn(U.infBtn, U.infInd) else setOff(U.infBtn, U.infInd) end
+end)
+UserInputService.JumpRequest:Connect(function()
+    if not S.infinityJump then return end
     local c = player.Character
     if not c then return end
-    local r = c:FindFirstChild("HumanoidRootPart")
     local h = c:FindFirstChildOfClass("Humanoid")
-    if not r or not h then return end
-    if not speedBV or speedBV.Parent ~= r then
-        if speedBV then speedBV:Destroy() end
-        speedBV = Instance.new("BodyVelocity")
-        speedBV.MaxForce = Vector3.new(9e9, 0, 9e9)
-        speedBV.P = 4000
-        speedBV.Parent = r
-    end
-    h.WalkSpeed = 16  -- always keep base value normal
-    local move = h.MoveDirection
-    local flat = Vector3.new(move.X, 0, move.Z)
-    local vy = r.AssemblyLinearVelocity.Y
-    if flat.Magnitude > 0.01 then
-        speedBV.Velocity = flat.Unit * S.speedhackSpeed + Vector3.new(0, vy, 0)
+    if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+end)
+
+createSectionTitle("FLING")
+
+U.f3Btn, U.f3Ind = createToggle("FlingOnTouch", "Fling 3rd party")
+U.f3Btn.MouseButton1Click:Connect(function()
+    S.flingThirdParty = not S.flingThirdParty
+    if S.flingThirdParty then
+        U.f3Btn.BackgroundColor3 = Color3.fromRGB(70, 45, 35)
+        U.f3Ind.BackgroundColor3 = Color3.fromRGB(230, 100, 55)
+        local ok = pcall(function()
+            loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Ultimate-Fling-GUI-41909"))()
+        end)
+        if not ok then sendNotification("MM2 Menu", "Failed to load 3rd party fling script.") end
     else
-        speedBV.Velocity = Vector3.new(0, vy, 0)
+        setOff(U.f3Btn, U.f3Ind)
     end
 end)
 
--- ============================================================
--- ESP TAB
--- ============================================================
-currentParent = U.tabFrames.ESP
-createSectionTitle("ROLE ESP")
-
-local function makeEspBtn(role)
-    local b, i = createToggle(role .. "ESP", role .. " ESP")
-    espButtons[role] = {Button = b, Indicator = i}
-    b.MouseButton1Click:Connect(function()
-        S.espEnabled[role] = not S.espEnabled[role]
-        if S.espEnabled[role] then
-            b.BackgroundColor3 = ROLE_COLORS[role]:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-            i.BackgroundColor3 = ROLE_COLORS[role]
-        else
-            setOff(b, i)
+local function flingLoop()
+    local lp = player
+    local c, hrp, vel, movel = nil, nil, nil, 0.1
+    while S.flingTouchActive do
+        RunService.Heartbeat:Wait()
+        c = lp.Character
+        hrp = c and c:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            vel = hrp.Velocity
+            hrp.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
+            RunService.RenderStepped:Wait()
+            hrp.Velocity = vel
+            RunService.Stepped:Wait()
+            hrp.Velocity = vel + Vector3.new(0, movel, 0)
+            movel = -movel
         end
-    end)
+    end
 end
-makeEspBtn("Innocent")
-makeEspBtn("Murderer")
-makeEspBtn("Sheriff")
-makeEspBtn("Hero")
 
-createSectionTitle("ITEM ESP")
-
-U.gunBtn, U.gunInd = createToggle("GunESP", "Gun ESP")
-U.gunBtn.MouseButton1Click:Connect(function()
-    S.gunESPEnabled = not S.gunESPEnabled
-    if S.gunESPEnabled then
-        U.gunBtn.BackgroundColor3 = GUN_COLOR:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-        U.gunInd.BackgroundColor3 = GUN_COLOR
+U.fib, U.fii = createToggle("FlingOnTouchIntegrated", "Fling On Touch")
+U.fib.MouseButton1Click:Connect(function()
+    S.flingOnTouch = not S.flingOnTouch
+    if S.flingOnTouch then
+        U.fib.BackgroundColor3 = Color3.fromRGB(70, 45, 35)
+        U.fii.BackgroundColor3 = Color3.fromRGB(230, 100, 55)
+        S.flingTouchActive = true
+        S.flingTouchThread = coroutine.create(flingLoop)
+        coroutine.resume(S.flingTouchThread)
     else
-        setOff(U.gunBtn, U.gunInd)
-        for gun, hl in pairs(S.gunHighlights) do
-            if hl then pcall(function() hl:Destroy() end) end
-        end
-        S.gunHighlights = {}
+        setOff(U.fib, U.fii)
+        S.flingTouchActive = false
     end
 end)
 
-createSectionTitle("PLAYER INFO")
+-- ============================================================
+-- UTILITY TAB
+-- ============================================================
+currentParent = U.tabFrames.Utility
+createSectionTitle("PROTECTION")
 
-U.distBtn, U.distInd = createToggle("PlayerDistance", "Player Distance (studs)")
-U.distBtn.MouseButton1Click:Connect(function()
-    S.playerDistanceOn = not S.playerDistanceOn
-    if S.playerDistanceOn then
-        setOn(U.distBtn, U.distInd)
+U.avBtn, U.avInd = createToggle("AntiVoid", "Anti Fall Down (Void)")
+U.avBtn.MouseButton1Click:Connect(function()
+    S.antiVoidEnabled = not S.antiVoidEnabled
+    if S.antiVoidEnabled then setOn(U.avBtn, U.avInd) else setOff(U.avBtn, U.avInd) end
+end)
+
+U.afBtn, U.afInd = createToggle("AntiFling", "Anti Fling")
+U.afBtn.MouseButton1Click:Connect(function()
+    S.antiFlingEnabled = not S.antiFlingEnabled
+    if S.antiFlingEnabled then setOn(U.afBtn, U.afInd) else setOff(U.afBtn, U.afInd) end
+end)
+
+U.afkBtn, U.afkInd = createToggle("AntiAfk", "Anti AFK")
+U.afkBtn.MouseButton1Click:Connect(function()
+    S.antiAfkEnabled = not S.antiAfkEnabled
+    if S.antiAfkEnabled then
+        setOn(U.afkBtn, U.afkInd)
+        if S.antiAfkConn then S.antiAfkConn:Disconnect() S.antiAfkConn = nil end
+        S.antiAfkConn = player.Idled:Connect(function()
+            local VU = game:GetService("VirtualUser")
+            VU:CaptureController()
+            VU:ClickButton2(Vector2.new())
+        end)
     else
-        setOff(U.distBtn, U.distInd)
-        for p, bg in pairs(S.playerDistBillboards) do
-            if bg then bg:Destroy() end
-        end
-        S.playerDistBillboards = {}
+        setOff(U.afkBtn, U.afkInd)
+        if S.antiAfkConn then S.antiAfkConn:Disconnect() S.antiAfkConn = nil end
     end
 end)
+
+createSectionTitle("ALERTS")
+
+U.murdererAlarmBtn, U.murdererAlarmInd = createToggle("MurdererAlarm", "Murderer Alarm (30 studs, closer only)")
+U.murdererAlarmBtn.MouseButton1Click:Connect(function()
+    S.murdererAlarmOn = not S.murdererAlarmOn
+    if S.murdererAlarmOn then
+        setOn(U.murdererAlarmBtn, U.murdererAlarmInd)
+        S.lastAlarmDist = math.huge
+    else
+        setOff(U.murdererAlarmBtn, U.murdererAlarmInd)
+        S.lastAlarmDist = math.huge
+    end
+end)
+
+U.gunAlertBtn, U.gunAlertInd = createToggle("GunDropAlert", "Gun Drop Alert")
+U.gunAlertBtn.MouseButton1Click:Connect(function()
+    S.gunDropAlert = not S.gunDropAlert
+    if S.gunDropAlert then setOn(U.gunAlertBtn, U.gunAlertInd) else setOff(U.gunAlertBtn, U.gunAlertInd) end
+end)
+
+createSectionTitle("OVERLAYS")
+
+U.camFollowBtn, U.camFollowInd = createToggle("CameraFollowMurderer", "Camera Follow Murderer")
+U.camFollowBtn.MouseButton1Click:Connect(function()
+    S.cameraFollowMurderer = not S.cameraFollowMurderer
+    if S.cameraFollowMurderer then setOn(U.camFollowBtn, U.camFollowInd) else setOff(U.camFollowBtn, U.camFollowInd) end
+end)
+
+U.crosshairBtn, U.crosshairInd = createToggle("Crosshair", "Rainbow Crosshair (follows mouse)")
+U.crosshairBtn.MouseButton1Click:Connect(function()
+    S.crosshairOn = not S.crosshairOn
+    if S.crosshairOn then
+        setOn(U.crosshairBtn, U.crosshairInd)
+        if S.crosshairGui then S.crosshairGui.Enabled = true end
+    else
+        setOff(U.crosshairBtn, U.crosshairInd)
+        if S.crosshairGui then S.crosshairGui.Enabled = false end
+    end
+end)
+
+createSectionTitle("TRAILS")
+
+U.murdererTrailBtn, U.murdererTrailInd = createToggle("MurdererTrail", "Murderer Trail")
+U.murdererTrailBtn.MouseButton1Click:Connect(function()
+    S.murdererTrailOn = not S.murdererTrailOn
+    if S.murdererTrailOn then setOn(U.murdererTrailBtn, U.murdererTrailInd) else setOff(U.murdererTrailBtn, U.murdererTrailInd) end
+end)
+
+U.sheriffTrailBtn, U.sheriffTrailInd = createToggle("SheriffTrail", "Sheriff Trail")
+U.sheriffTrailBtn.MouseButton1Click:Connect(function()
+    S.sheriffTrailOn = not S.sheriffTrailOn
+    if S.sheriffTrailOn then setOn(U.sheriffTrailBtn, U.sheriffTrailInd) else setOff(U.sheriffTrailBtn, U.sheriffTrailInd) end
+end)
+
+U.heroTrailBtn, U.heroTrailInd = createToggle("HeroTrail", "Hero Trail")
+U.heroTrailBtn.MouseButton1Click:Connect(function()
+    S.heroTrailOn = not S.heroTrailOn
+    if S.heroTrailOn then setOn(U.heroTrailBtn, U.heroTrailInd) else setOff(U.heroTrailBtn, U.heroTrailInd) end
+end)
+
+-- ============================================================
+-- TELEPORT TAB
+-- ============================================================
+currentParent = U.tabFrames.Teleport
+createSectionTitle("QUICK TELEPORTS")
+
+U.spawnTpBtn = createActionButton("SpawnTeleport", "Teleport To Spawn")
+U.spawnTpBtn.MouseButton1Click:Connect(function()
+    local c = player.Character
+    if not c then return end
+    local mr = c:FindFirstChild("HumanoidRootPart")
+    if not mr then return end
+    local sl = workspace:FindFirstChildOfClass("SpawnLocation")
+    if sl then mr.CFrame = sl.CFrame + Vector3.new(0, 3, 0) return end
+    local sp = workspace:FindFirstChild("Spawn", true)
+    if sp and sp:IsA("BasePart") then mr.CFrame = sp.CFrame + Vector3.new(0, 3, 0) end
+end)
+
+U.tpMurdererBtn = createActionButton("TeleportMurderer", "Teleport To Murderer")
+U.tpMurdererBtn.MouseButton1Click:Connect(function()
+    if not MurdererName then return end
+    local t = Players:FindFirstChild(MurdererName)
+    if not t or not t.Character then return end
+    local tr = t.Character:FindFirstChild("HumanoidRootPart")
+    local c = player.Character
+    if c and tr then
+        local mr = c:FindFirstChild("HumanoidRootPart")
+        if mr then mr.CFrame = tr.CFrame + Vector3.new(0, 3, 0) end
+    end
+end)
+
+U.tpSheriffBtn = createActionButton("TeleportSheriff", "Teleport To Sheriff")
+U.tpSheriffBtn.MouseButton1Click:Connect(function()
+    if not SheriffName then return end
+    local t = Players:FindFirstChild(SheriffName)
+    if not t or not t.Character then return end
+    local tr = t.Character:FindFirstChild("HumanoidRootPart")
+    local c = player.Character
+    if c and tr then
+        local mr = c:FindFirstChild("HumanoidRootPart")
+        if mr then mr.CFrame = tr.CFrame + Vector3.new(0, 3, 0) end
+    end
+end)
+
+U.tpHeroBtn = createActionButton("TeleportHero", "Teleport To Hero")
+U.tpHeroBtn.MouseButton1Click:Connect(function()
+    if not HeroName then return end
+    local t = Players:FindFirstChild(HeroName)
+    if not t or not t.Character then return end
+    local tr = t.Character:FindFirstChild("HumanoidRootPart")
+    local c = player.Character
+    if c and tr then
+        local mr = c:FindFirstChild("HumanoidRootPart")
+        if mr then mr.CFrame = tr.CFrame + Vector3.new(0, 3, 0) end
+    end
+end)
+
+createSectionTitle("WORLD TELEPORTS")
+
+local function findGunPart()
+    local gd = workspace:FindFirstChild("GunDrop", true) or workspace:FindFirstChild("Gun", true)
+    if not gd then return nil end
+    if gd:IsA("BasePart") then return gd end
+    if gd:IsA("Model") then return gd.PrimaryPart or gd:FindFirstChildOfClass("BasePart") end
+    if gd:IsA("Tool") then return gd:FindFirstChild("Handle") or gd:FindFirstChildOfClass("BasePart") end
+    return nil
+end
+
+local function tpGunAndBack()
+    local c = player.Character
+    if not c then return false end
+    local mr = c:FindFirstChild("HumanoidRootPart")
+    if not mr then return false end
+    local tp = findGunPart()
+    if not tp then return false end
+    local orig = mr.CFrame
+    mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
+    task.wait(0.35)
+    mr.CFrame = orig
+    return true
+end
+
+local function getSafeUnderMapY()
+    local lowest = math.huge
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("BasePart") and not obj:IsDescendantOf(player.Character) then
+            if obj.Position.Y < lowest then lowest = obj.Position.Y end
+        elseif obj:IsA("Model") then
+            for _, part in ipairs(obj:GetDescendants()) do
+                if part:IsA("BasePart") and part.Position.Y < lowest then
+                    lowest = part.Position.Y
+                end
+            end
+        end
+    end
+    if lowest == math.huge or lowest < -200 then lowest = 0 end
+    local candidate = lowest - 15
+    local minSafe = S.VOID_Y_THRESHOLD + 15
+    if candidate < minSafe then candidate = minSafe end
+    return candidate
+end
+
+local function anchorUnderMap(hrp)
+    if not hrp then return end
+    local safeY = getSafeUnderMapY()
+    local x, z = hrp.Position.X, hrp.Position.Z
+    hrp.CFrame = CFrame.new(x, safeY, z)
+    hrp.Velocity = Vector3.zero
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+
+    if gunTpAnchor then gunTpAnchor:Destroy() end
+    gunTpAnchor = Instance.new("BodyPosition")
+    gunTpAnchor.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    gunTpAnchor.P = 100000
+    gunTpAnchor.D = 5000
+    gunTpAnchor.Position = Vector3.new(x, safeY, z)
+    gunTpAnchor.Parent = hrp
+end
+
+local function autoTPGunTop()
+    local now = tick()
+    if now - lastAutoGunTP < 3 then return end
+    local c = player.Character
+    if not c then return end
+    if c:FindFirstChild("Gun") or c:FindFirstChild("Knife") then return end
+    local mr = c:FindFirstChild("HumanoidRootPart")
+    if not mr then return end
+    local tp = findGunPart()
+    if not tp then return end
+    lastAutoGunTP = now
+
+    mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
+    task.wait(0.3)
+    anchorUnderMap(mr)
+end
+
+U.autoGunBtn, U.autoGunInd = createToggle("AutoGunTP", "Auto Teleport To Gun (Hide Under Map)")
+U.autoGunBtn.MouseButton1Click:Connect(function()
+    S.autoGunTP = not S.autoGunTP
+    if S.autoGunTP then
+        setOn(U.autoGunBtn, U.autoGunInd)
+    else
+        setOff(U.autoGunBtn, U.autoGunInd)
+        if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
+    end
+end)
+
+U.gunTpBtn = createActionButton("GunTeleport", "Teleport To Gun")
+U.gunTpBtn.MouseButton1Click:Connect(function()
+    if not tpGunAndBack() then sendNotification("MM2 Menu", "No dropped gun found on the map!", SOUNDS.alert) end
+end)
+
+createSectionTitle("PLAYER ACTIONS")
+
+U.pDropdown = Instance.new("TextButton")
+U.pDropdown.Size = UDim2.new(1, 0, 0, 34)
+U.pDropdown.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+U.pDropdown.BorderSizePixel = 0
+U.pDropdown.Text = "Select Player"
+U.pDropdown.TextColor3 = Color3.fromRGB(230, 230, 235)
+U.pDropdown.TextSize = 12
+U.pDropdown.Font = Enum.Font.GothamSemibold
+U.pDropdown.AutoButtonColor = false
+U.pDropdown.LayoutOrder = getLayoutOrder()
+U.pDropdown.Parent = currentParent
+do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = U.pDropdown end
+
+U.pList = Instance.new("ScrollingFrame")
+U.pList.Size = UDim2.new(1, 0, 0, 0)
+U.pList.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
+U.pList.BorderSizePixel = 0
+U.pList.Visible = false
+U.pList.ClipsDescendants = true
+U.pList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+U.pList.ScrollingDirection = Enum.ScrollingDirection.Y
+U.pList.ScrollBarThickness = 5
+U.pList.ScrollBarImageColor3 = Color3.fromRGB(75, 77, 85)
+U.pList.LayoutOrder = getLayoutOrder()
+U.pList.Parent = currentParent
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = U.pList
+    local l = Instance.new("UIListLayout") l.Padding = UDim.new(0, 2) l.SortOrder = Enum.SortOrder.Name l.Parent = U.pList
+end
+
+local function refreshPList()
+    for _, ch in ipairs(U.pList:GetChildren()) do
+        if ch:IsA("TextButton") then ch:Destroy() end
+    end
+    for _, t in ipairs(Players:GetPlayers()) do
+        if t ~= player then
+            local o = Instance.new("TextButton")
+            o.Name = t.Name
+            o.Size = UDim2.new(1, -10, 0, 30)
+            o.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+            o.BorderSizePixel = 0
+            o.Text = t.DisplayName .. " (@" .. t.Name .. ")"
+            o.TextColor3 = Color3.fromRGB(230, 230, 235)
+            o.TextSize = 12
+            o.Font = Enum.Font.GothamSemibold
+            o.AutoButtonColor = false
+            o.Parent = U.pList
+            do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 6) c.Parent = o end
+            o.MouseButton1Click:Connect(function()
+                S.selectedPlayer = t
+                U.pDropdown.Text = "Selected: " .. t.Name
+                S.dropdownOpen = false
+                U.pList.Visible = false
+                U.pList.Size = UDim2.new(1, 0, 0, 0)
+            end)
+        end
+    end
+end
+
+U.pDropdown.MouseButton1Click:Connect(function()
+    S.dropdownOpen = not S.dropdownOpen
+    if S.dropdownOpen then
+        refreshPList()
+        U.pList.Visible = true
+        U.pList.Size = UDim2.new(1, 0, 0, 120)
+    else
+        U.pList.Visible = false
+        U.pList.Size = UDim2.new(1, 0, 0, 0)
+    end
+end)
+
+U.playerTpBtn = createActionButton("PlayerTeleport", "Teleport To Player")
+U.killSelBtn = createActionButton("KillSelectedPlayer", "Kill Selected Player")
+
+U.playerTpBtn.MouseButton1Click:Connect(function()
+    if not S.selectedPlayer or not S.selectedPlayer.Character then return end
+    local tr = S.selectedPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local c = player.Character
+    if c and tr then
+        local mr = c:FindFirstChild("HumanoidRootPart")
+        if mr then mr.CFrame = tr.CFrame + Vector3.new(0, 3, 0) end
+    end
+end)
+
+Players.PlayerAdded:Connect(function() if S.dropdownOpen then refreshPList() end end)
+Players.PlayerRemoving:Connect(function(t)
+    if S.selectedPlayer == t then S.selectedPlayer = nil U.pDropdown.Text = "Select Player" end
+    if S.dropdownOpen then refreshPList() end
+end)
+
+-- ============================================================
+-- MURDERER TAB
+-- ============================================================
+currentParent = U.tabFrames.Murderer
+createSectionTitle("MURDERER")
+
+local function getKnife()
+    local c = player.Character
+    if not c then return nil end
+    local k = c:FindFirstChild("Knife")
+    if not k then
+        local bp = player:FindFirstChild("Backpack")
+        if bp then k = bp:FindFirstChild("Knife") if k then k.Parent = c end end
+    end
+    return k
+end
+
+local function attackTarget(t)
+    if not t or t == player or not t.Character then return end
+    if isPlayerInSpawn(t) then return end
+    local tr = t.Character:FindFirstChild("HumanoidRootPart")
+    local mr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if tr and mr then
+        local k = getKnife()
+        if k then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.05)
+            pcall(function() k:Activate() end)
+        end
+    end
+end
+
+local function killAllPlayers()
+    local c = player.Character
+    if not c then return end
+    local mr = c:FindFirstChild("HumanoidRootPart")
+    if not mr then return end
+    local k = getKnife()
+    if not k then sendNotification("MM2 Menu", "No knife equipped!", SOUNDS.alert) return end
+
+    local function getTargets()
+        local list = {}
+        for _, t in ipairs(Players:GetPlayers()) do
+            if t ~= player and t.Character and not isPlayerInSpawn(t) then
+                local h = t.Character:FindFirstChildOfClass("Humanoid")
+                local tr = t.Character:FindFirstChild("HumanoidRootPart")
+                if h and h.Health > 0 and tr then table.insert(list, tr) end
+            end
+        end
+        return list
+    end
+
+    for _, tr in ipairs(getTargets()) do
+        if tr and tr.Parent then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.03)
+            pcall(function() k:Activate() end)
+        end
+    end
+    task.wait(0.15)
+    for _, tr in ipairs(getTargets()) do
+        if tr and tr.Parent then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.03)
+            pcall(function() k:Activate() end)
+        end
+    end
+    task.wait(0.15)
+    for _, tr in ipairs(getTargets()) do
+        if tr and tr.Parent then
+            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
+            task.wait(0.03)
+            pcall(function() k:Activate() end)
+        end
+    end
+end
+
+U.killAllBtn = createActionButton("KillAllNow", "Kill All Now")
+U.killAllBtn.MouseButton1Click:Connect(killAllPlayers)
+
+U.killSheriffBtn = createActionButton("KillSheriffNow", "Kill Sheriff Now")
+U.killSheriffBtn.MouseButton1Click:Connect(function()
+    if not SheriffName then return end
+    local t = Players:FindFirstChild(SheriffName)
+    if t then attackTarget(t) end
+end)
+
+U.killHeroBtn = createActionButton("KillHeroNow", "Kill Hero Now")
+U.killHeroBtn.MouseButton1Click:Connect(function()
+    if not HeroName then return end
+    local t = Players:FindFirstChild(HeroName)
+    if t then attackTarget(t) end
+end)
+
+U.killSelBtn2 = createActionButton("KillSelectedFromMurderer", "Kill Selected Player")
+U.killSelBtn2.MouseButton1Click:Connect(function()
+    if S.selectedPlayer then attackTarget(S.selectedPlayer) end
+end)
+
+createSectionTitle("AUTOMATION")
+
+U.autoKillBtn, U.autoKillInd = createToggle("AutoKillAll", "Auto Kill All")
+U.autoKillBtn.MouseButton1Click:Connect(function()
+    S.autoKillAll = not S.autoKillAll
+    if S.autoKillAll then setOn(U.autoKillBtn, U.autoKillInd) else setOff(U.autoKillBtn, U.autoKillInd) end
+end)
+
+U.autoPlayBtn, U.autoPlayInd = createToggle("AutoPlay", "Auto Play (role-based)")
+U.autoPlayBtn.MouseButton1Click:Connect(function()
+    S.autoPlayOn = not S.autoPlayOn
+    if S.autoPlayOn then
+        setOn(U.autoPlayBtn, U.autoPlayInd)
+        sendNotification("MM2 Menu", "Auto Play ON", SOUNDS.notify)
+    else
+        setOff(U.autoPlayBtn, U.autoPlayInd)
+    end
+end)
+
+U.killSoundBtn, U.killSoundInd = createToggle("KillSound", "Kill Sound")
+U.killSoundBtn.MouseButton1Click:Connect(function()
+    S.killSoundOn = not S.killSoundOn
+    if S.killSoundOn then setOn(U.killSoundBtn, U.killSoundInd) else setOff(U.killSoundBtn, U.killSoundInd) end
+end)
+
+-- ============================================================
+-- SHERIFF TAB
+-- ============================================================
+currentParent = U.tabFrames.Sheriff
+createSectionTitle("SHERIFF")
+
+local function getGun()
+    local c = player.Character
+    if not c then return nil end
+    local g = c:FindFirstChild("Gun")
+    if not g then
+        local bp = player:FindFirstChild("Backpack")
+        if bp then g = bp:FindFirstChild("Gun") if g then g.Parent = c end end
+    end
+    return g
+end
+
+local function shootMurderer()
+    if not MurdererName then
+        sendNotification("MM2 Menu", "Murderer not found yet!", SOUNDS.alert)
+        return false
+    end
+    local target = Players:FindFirstChild(MurdererName)
+    if not target or not target.Character then return false end
+    if isPlayerInSpawn(target) then
+        sendNotification("MM2 Menu", "Murderer is in spawn/lobby!", SOUNDS.alert)
+        return false
+    end
+
+    local c = player.Character
+    if not c then return false end
+    local myRoot = c:FindFirstChild("HumanoidRootPart")
+    local humanoid = c:FindFirstChildOfClass("Humanoid")
+    if not myRoot or not humanoid then return false end
+
+    local gun = getGun()
+    if not gun then
+        sendNotification("MM2 Menu", "You do not have a Gun equipped!", SOUNDS.alert)
+        return false
+    end
+
+    if gun.Parent ~= c then
+        pcall(function() humanoid:EquipTool(gun) end)
+        task.wait(0.3)
+    end
+
+    local killed = false
+    for attempt = 1, 4 do
+        local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        myRoot = c:FindFirstChild("HumanoidRootPart")
+        if not targetRoot or not myRoot then break end
+
+        local targetPos = targetRoot.Position
+        local standPos = targetPos + (targetRoot.CFrame.LookVector * 3) + Vector3.new(0, 2, 0)
+        myRoot.CFrame = CFrame.new(standPos, targetPos)
+        task.wait(0.08)
+
+        local fired = false
+        for _, name in ipairs({"Shoot", "Fire", "FireGun", "ShootGun", "ClientShoot"}) do
+            local sr = gun:FindFirstChild(name)
+            if sr and sr:IsA("RemoteEvent") then
+                pcall(function() sr:FireServer() end)
+                fired = true
+            end
+        end
+
+        if not fired then
+            for _, name in ipairs({"Shoot", "Fire", "FireGun"}) do
+                local sr = ReplicatedStorage:FindFirstChild(name, true)
+                if sr and sr:IsA("RemoteEvent") then
+                    pcall(function() sr:FireServer() end)
+                    fired = true
+                    break
+                end
+            end
+        end
+
+        pcall(function() gun:Activate() end)
+
+        task.wait(0.25)
+
+        local h = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+        if not h or h.Health <= 0 then killed = true break end
+    end
+    return killed
+end
+
+U.killMurdererBtn = createActionButton("KillMurdererNow", "Kill Murderer Now")
+U.killMurdererBtn.MouseButton1Click:Connect(shootMurderer)
 
 -- ============================================================
 -- NOTIFIER TAB
 -- ============================================================
 currentParent = U.tabFrames.Notifier
-createSectionTitle("NOTIFIER")
+createSectionTitle("ROLE NOTIFIER")
 
 local function fmtRole(r, n)
     if not n then return r .. ": None" end
@@ -1187,442 +1855,6 @@ U.autoSheriffChatBtn.MouseButton1Click:Connect(function()
         S.lastChatSentSheriff = nil
         S.roundActiveSheriff = false
     end
-end)
-
--- ============================================================
--- MURDERER TAB
--- ============================================================
-currentParent = U.tabFrames.Murderer
-createSectionTitle("MURDERER")
-
-local function getKnife()
-    local c = player.Character
-    if not c then return nil end
-    local k = c:FindFirstChild("Knife")
-    if not k then
-        local bp = player:FindFirstChild("Backpack")
-        if bp then k = bp:FindFirstChild("Knife") if k then k.Parent = c end end
-    end
-    return k
-end
-
-local function attackTarget(t)
-    if not t or t == player or not t.Character then return end
-    if isPlayerInSpawn(t) then return end
-    local tr = t.Character:FindFirstChild("HumanoidRootPart")
-    local mr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if tr and mr then
-        local k = getKnife()
-        if k then
-            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
-            task.wait(0.05)
-            pcall(function() k:Activate() end)
-        end
-    end
-end
-
-local function killAllPlayers()
-    local c = player.Character
-    if not c then return end
-    local mr = c:FindFirstChild("HumanoidRootPart")
-    if not mr then return end
-    local k = getKnife()
-    if not k then sendNotification("MM2 Menu", "No knife equipped!", SOUNDS.alert) return end
-
-    local function getTargets()
-        local list = {}
-        for _, t in ipairs(Players:GetPlayers()) do
-            if t ~= player and t.Character and not isPlayerInSpawn(t) then
-                local h = t.Character:FindFirstChildOfClass("Humanoid")
-                local tr = t.Character:FindFirstChild("HumanoidRootPart")
-                if h and h.Health > 0 and tr then table.insert(list, tr) end
-            end
-        end
-        return list
-    end
-
-    for _, tr in ipairs(getTargets()) do
-        if tr and tr.Parent then
-            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
-            task.wait(0.03)
-            pcall(function() k:Activate() end)
-        end
-    end
-    task.wait(0.15)
-    for _, tr in ipairs(getTargets()) do
-        if tr and tr.Parent then
-            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
-            task.wait(0.03)
-            pcall(function() k:Activate() end)
-        end
-    end
-    task.wait(0.15)
-    for _, tr in ipairs(getTargets()) do
-        if tr and tr.Parent then
-            mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
-            task.wait(0.03)
-            pcall(function() k:Activate() end)
-        end
-    end
-end
-
-local function killByName(n)
-    if not n then return end
-    local t = Players:FindFirstChild(n)
-    if t then attackTarget(t) end
-end
-
-U.autoKillBtn, U.autoKillInd = createToggle("AutoKillAll", "Auto Kill All")
-U.autoKillBtn.MouseButton1Click:Connect(function()
-    S.autoKillAll = not S.autoKillAll
-    if S.autoKillAll then setOn(U.autoKillBtn, U.autoKillInd) else setOff(U.autoKillBtn, U.autoKillInd) end
-end)
-
-U.killAllBtn = createActionButton("KillAllNow", "Kill All Now")
-U.killAllBtn.MouseButton1Click:Connect(killAllPlayers)
-
-U.killSheriffBtn = createActionButton("KillSheriffNow", "Kill Sheriff Now")
-U.killSheriffBtn.MouseButton1Click:Connect(function() killByName(SheriffName) end)
-
-U.killHeroBtn = createActionButton("KillHeroNow", "Kill Hero Now")
-U.killHeroBtn.MouseButton1Click:Connect(function() killByName(HeroName) end)
-
-U.killSoundBtn, U.killSoundInd = createToggle("KillSound", "Kill Sound")
-U.killSoundBtn.MouseButton1Click:Connect(function()
-    S.killSoundOn = not S.killSoundOn
-    if S.killSoundOn then setOn(U.killSoundBtn, U.killSoundInd) else setOff(U.killSoundBtn, U.killSoundInd) end
-end)
-
-U.autoPlayBtn, U.autoPlayInd = createToggle("AutoPlay", "Auto Play (role-based)")
-U.autoPlayBtn.MouseButton1Click:Connect(function()
-    S.autoPlayOn = not S.autoPlayOn
-    if S.autoPlayOn then
-        setOn(U.autoPlayBtn, U.autoPlayInd)
-        sendNotification("MM2 Menu", "Auto Play ON", SOUNDS.notify)
-    else
-        setOff(U.autoPlayBtn, U.autoPlayInd)
-    end
-end)
-
--- ============================================================
--- SHERIFF TAB
--- ============================================================
-currentParent = U.tabFrames.Sheriff
-createSectionTitle("SHERIFF")
-
-local function getGun()
-    local c = player.Character
-    if not c then return nil end
-    local g = c:FindFirstChild("Gun")
-    if not g then
-        local bp = player:FindFirstChild("Backpack")
-        if bp then g = bp:FindFirstChild("Gun") if g then g.Parent = c end end
-    end
-    return g
-end
-
-local function shootMurderer()
-    if not MurdererName then
-        sendNotification("MM2 Menu", "Murderer not found yet!", SOUNDS.alert)
-        return false
-    end
-    local target = Players:FindFirstChild(MurdererName)
-    if not target or not target.Character then return false end
-    if isPlayerInSpawn(target) then
-        sendNotification("MM2 Menu", "Murderer is in spawn/lobby!", SOUNDS.alert)
-        return false
-    end
-
-    local c = player.Character
-    if not c then return false end
-    local myRoot = c:FindFirstChild("HumanoidRootPart")
-    local humanoid = c:FindFirstChildOfClass("Humanoid")
-    if not myRoot or not humanoid then return false end
-
-    local gun = getGun()
-    if not gun then
-        sendNotification("MM2 Menu", "You do not have a Gun equipped!", SOUNDS.alert)
-        return false
-    end
-
-    if gun.Parent ~= c then
-        pcall(function() humanoid:EquipTool(gun) end)
-        task.wait(0.3)
-    end
-
-    local killed = false
-    for attempt = 1, 4 do
-        local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-        myRoot = c:FindFirstChild("HumanoidRootPart")
-        if not targetRoot or not myRoot then break end
-
-        local targetPos = targetRoot.Position
-        local standPos = targetPos + (targetRoot.CFrame.LookVector * 3) + Vector3.new(0, 2, 0)
-        myRoot.CFrame = CFrame.new(standPos, targetPos)
-        task.wait(0.08)
-
-        local fired = false
-        for _, name in ipairs({"Shoot", "Fire", "FireGun", "ShootGun", "ClientShoot"}) do
-            local sr = gun:FindFirstChild(name)
-            if sr and sr:IsA("RemoteEvent") then
-                pcall(function() sr:FireServer() end)
-                fired = true
-            end
-        end
-
-        if not fired then
-            for _, name in ipairs({"Shoot", "Fire", "FireGun"}) do
-                local sr = ReplicatedStorage:FindFirstChild(name, true)
-                if sr and sr:IsA("RemoteEvent") then
-                    pcall(function() sr:FireServer() end)
-                    fired = true
-                    break
-                end
-            end
-        end
-
-        pcall(function() gun:Activate() end)
-
-        task.wait(0.25)
-
-        local h = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
-        if not h or h.Health <= 0 then killed = true break end
-    end
-    return killed
-end
-
-U.killMurdererBtn = createActionButton("KillMurdererNow", "Kill Murderer Now")
-U.killMurdererBtn.MouseButton1Click:Connect(shootMurderer)
-
--- ============================================================
--- TELEPORT TAB
--- ============================================================
-currentParent = U.tabFrames.Teleport
-createSectionTitle("PLAYER ACTIONS")
-
-U.pDropdown = Instance.new("TextButton")
-U.pDropdown.Size = UDim2.new(1, 0, 0, 34)
-U.pDropdown.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-U.pDropdown.BorderSizePixel = 0
-U.pDropdown.Text = "Select Player"
-U.pDropdown.TextColor3 = Color3.fromRGB(230, 230, 235)
-U.pDropdown.TextSize = 12
-U.pDropdown.Font = Enum.Font.GothamSemibold
-U.pDropdown.AutoButtonColor = false
-U.pDropdown.LayoutOrder = getLayoutOrder()
-U.pDropdown.Parent = currentParent
-do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = U.pDropdown end
-
-U.pList = Instance.new("ScrollingFrame")
-U.pList.Size = UDim2.new(1, 0, 0, 0)
-U.pList.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
-U.pList.BorderSizePixel = 0
-U.pList.Visible = false
-U.pList.ClipsDescendants = true
-U.pList.AutomaticCanvasSize = Enum.AutomaticSize.Y
-U.pList.ScrollingDirection = Enum.ScrollingDirection.Y
-U.pList.ScrollBarThickness = 5
-U.pList.ScrollBarImageColor3 = Color3.fromRGB(75, 77, 85)
-U.pList.LayoutOrder = getLayoutOrder()
-U.pList.Parent = currentParent
-do
-    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = U.pList
-    local l = Instance.new("UIListLayout") l.Padding = UDim.new(0, 2) l.SortOrder = Enum.SortOrder.Name l.Parent = U.pList
-end
-
-local function refreshPList()
-    for _, ch in ipairs(U.pList:GetChildren()) do
-        if ch:IsA("TextButton") then ch:Destroy() end
-    end
-    for _, t in ipairs(Players:GetPlayers()) do
-        if t ~= player then
-            local o = Instance.new("TextButton")
-            o.Name = t.Name
-            o.Size = UDim2.new(1, -10, 0, 30)
-            o.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-            o.BorderSizePixel = 0
-            o.Text = t.DisplayName .. " (@" .. t.Name .. ")"
-            o.TextColor3 = Color3.fromRGB(230, 230, 235)
-            o.TextSize = 12
-            o.Font = Enum.Font.GothamSemibold
-            o.AutoButtonColor = false
-            o.Parent = U.pList
-            do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 6) c.Parent = o end
-            o.MouseButton1Click:Connect(function()
-                S.selectedPlayer = t
-                U.pDropdown.Text = "Selected: " .. t.Name
-                S.dropdownOpen = false
-                U.pList.Visible = false
-                U.pList.Size = UDim2.new(1, 0, 0, 0)
-            end)
-        end
-    end
-end
-
-U.pDropdown.MouseButton1Click:Connect(function()
-    S.dropdownOpen = not S.dropdownOpen
-    if S.dropdownOpen then
-        refreshPList()
-        U.pList.Visible = true
-        U.pList.Size = UDim2.new(1, 0, 0, 120)
-    else
-        U.pList.Visible = false
-        U.pList.Size = UDim2.new(1, 0, 0, 0)
-    end
-end)
-
-U.playerTpBtn = createActionButton("PlayerTeleport", "Teleport To Player")
-U.killSelBtn = createActionButton("KillSelectedPlayer", "Kill Selected Player")
-
-U.playerTpBtn.MouseButton1Click:Connect(function()
-    if not S.selectedPlayer or not S.selectedPlayer.Character then return end
-    local tr = S.selectedPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local c = player.Character
-    if c and tr then
-        local mr = c:FindFirstChild("HumanoidRootPart")
-        if mr then mr.CFrame = tr.CFrame + Vector3.new(0, 3, 0) end
-    end
-end)
-
-U.killSelBtn.MouseButton1Click:Connect(function()
-    if S.selectedPlayer then attackTarget(S.selectedPlayer) end
-end)
-
-Players.PlayerAdded:Connect(function() if S.dropdownOpen then refreshPList() end end)
-Players.PlayerRemoving:Connect(function(t)
-    if S.selectedPlayer == t then S.selectedPlayer = nil U.pDropdown.Text = "Select Player" end
-    if S.dropdownOpen then refreshPList() end
-end)
-
-createSectionTitle("ROLE TELEPORTS")
-
-local function tpByName(n)
-    if not n then return end
-    local t = Players:FindFirstChild(n)
-    if not t or not t.Character then return end
-    local tr = t.Character:FindFirstChild("HumanoidRootPart")
-    local c = player.Character
-    if c and tr then
-        local mr = c:FindFirstChild("HumanoidRootPart")
-        if mr then mr.CFrame = tr.CFrame + Vector3.new(0, 3, 0) end
-    end
-end
-
-U.tpMurdererBtn = createActionButton("TeleportMurderer", "Teleport To Murderer")
-U.tpMurdererBtn.MouseButton1Click:Connect(function() tpByName(MurdererName) end)
-U.tpSheriffBtn = createActionButton("TeleportSheriff", "Teleport To Sheriff")
-U.tpSheriffBtn.MouseButton1Click:Connect(function() tpByName(SheriffName) end)
-U.tpHeroBtn = createActionButton("TeleportHero", "Teleport To Hero")
-U.tpHeroBtn.MouseButton1Click:Connect(function() tpByName(HeroName) end)
-
-createSectionTitle("WORLD TELEPORTS")
-
-local function findGunPart()
-    local gd = workspace:FindFirstChild("GunDrop", true) or workspace:FindFirstChild("Gun", true)
-    if not gd then return nil end
-    if gd:IsA("BasePart") then return gd end
-    if gd:IsA("Model") then return gd.PrimaryPart or gd:FindFirstChildOfClass("BasePart") end
-    if gd:IsA("Tool") then return gd:FindFirstChild("Handle") or gd:FindFirstChildOfClass("BasePart") end
-    return nil
-end
-
-local function tpGunAndBack()
-    local c = player.Character
-    if not c then return false end
-    local mr = c:FindFirstChild("HumanoidRootPart")
-    if not mr then return false end
-    local tp = findGunPart()
-    if not tp then return false end
-    local orig = mr.CFrame
-    mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
-    task.wait(0.35)
-    mr.CFrame = orig
-    return true
-end
-
-local function getSafeUnderMapY()
-    local lowest = math.huge
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj:IsA("BasePart") and not obj:IsDescendantOf(player.Character) then
-            if obj.Position.Y < lowest then lowest = obj.Position.Y end
-        elseif obj:IsA("Model") then
-            for _, part in ipairs(obj:GetDescendants()) do
-                if part:IsA("BasePart") and part.Position.Y < lowest then
-                    lowest = part.Position.Y
-                end
-            end
-        end
-    end
-    if lowest == math.huge or lowest < -200 then lowest = 0 end
-    local candidate = lowest - 15
-    -- Stay well above void threshold to avoid anti-cheat "invalid position" kick
-    local minSafe = S.VOID_Y_THRESHOLD + 15
-    if candidate < minSafe then candidate = minSafe end
-    return candidate
-end
-
--- Teleport under-map and anchor player there (used by auto-gun + flee)
-local function anchorUnderMap(hrp)
-    if not hrp then return end
-    local safeY = getSafeUnderMapY()
-    local x, z = hrp.Position.X, hrp.Position.Z
-    hrp.CFrame = CFrame.new(x, safeY, z)
-    hrp.Velocity = Vector3.zero
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    hrp.AssemblyAngularVelocity = Vector3.zero
-
-    if gunTpAnchor then gunTpAnchor:Destroy() end
-    gunTpAnchor = Instance.new("BodyPosition")
-    gunTpAnchor.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-    gunTpAnchor.P = 100000
-    gunTpAnchor.D = 5000
-    gunTpAnchor.Position = Vector3.new(x, safeY, z)
-    gunTpAnchor.Parent = hrp
-end
-
-local function autoTPGunTop()
-    local now = tick()
-    if now - lastAutoGunTP < 3 then return end
-    local c = player.Character
-    if not c then return end
-    if c:FindFirstChild("Gun") or c:FindFirstChild("Knife") then return end
-    local mr = c:FindFirstChild("HumanoidRootPart")
-    if not mr then return end
-    local tp = findGunPart()
-    if not tp then return end
-    lastAutoGunTP = now
-
-    mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
-    task.wait(0.3)
-    anchorUnderMap(mr)
-end
-
-U.autoGunBtn, U.autoGunInd = createToggle("AutoGunTP", "Auto Teleport To Gun (Hide Under Map)")
-U.autoGunBtn.MouseButton1Click:Connect(function()
-    S.autoGunTP = not S.autoGunTP
-    if S.autoGunTP then
-        setOn(U.autoGunBtn, U.autoGunInd)
-    else
-        setOff(U.autoGunBtn, U.autoGunInd)
-        if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
-    end
-end)
-
-U.spawnTpBtn = createActionButton("SpawnTeleport", "Teleport To Spawn")
-U.spawnTpBtn.MouseButton1Click:Connect(function()
-    local c = player.Character
-    if not c then return end
-    local mr = c:FindFirstChild("HumanoidRootPart")
-    if not mr then return end
-    local sl = workspace:FindFirstChildOfClass("SpawnLocation")
-    if sl then mr.CFrame = sl.CFrame + Vector3.new(0, 3, 0) return end
-    local sp = workspace:FindFirstChild("Spawn", true)
-    if sp and sp:IsA("BasePart") then mr.CFrame = sp.CFrame + Vector3.new(0, 3, 0) end
-end)
-
-U.gunTpBtn = createActionButton("GunTeleport", "Teleport To Gun")
-U.gunTpBtn.MouseButton1Click:Connect(function()
-    if not tpGunAndBack() then sendNotification("MM2 Menu", "No dropped gun found on the map!", SOUNDS.alert) end
 end)
 
 -- ============================================================
@@ -1790,99 +2022,6 @@ end)
 
 applyOpacity(100)
 
--- ============================================================
--- UTILITY TAB
--- ============================================================
-currentParent = U.tabFrames.Utility
-createSectionTitle("UTILITY")
-
-U.avBtn, U.avInd = createToggle("AntiVoid", "Anti Fall Down (Void)")
-U.avBtn.MouseButton1Click:Connect(function()
-    S.antiVoidEnabled = not S.antiVoidEnabled
-    if S.antiVoidEnabled then setOn(U.avBtn, U.avInd) else setOff(U.avBtn, U.avInd) end
-end)
-
-U.afBtn, U.afInd = createToggle("AntiFling", "Anti Fling")
-U.afBtn.MouseButton1Click:Connect(function()
-    S.antiFlingEnabled = not S.antiFlingEnabled
-    if S.antiFlingEnabled then setOn(U.afBtn, U.afInd) else setOff(U.afBtn, U.afInd) end
-end)
-
-U.afkBtn, U.afkInd = createToggle("AntiAfk", "Anti AFK")
-U.afkBtn.MouseButton1Click:Connect(function()
-    S.antiAfkEnabled = not S.antiAfkEnabled
-    if S.antiAfkEnabled then
-        setOn(U.afkBtn, U.afkInd)
-        if S.antiAfkConn then S.antiAfkConn:Disconnect() S.antiAfkConn = nil end
-        S.antiAfkConn = player.Idled:Connect(function()
-            local VU = game:GetService("VirtualUser")
-            VU:CaptureController()
-            VU:ClickButton2(Vector2.new())
-        end)
-    else
-        setOff(U.afkBtn, U.afkInd)
-        if S.antiAfkConn then S.antiAfkConn:Disconnect() S.antiAfkConn = nil end
-    end
-end)
-
-U.gunAlertBtn, U.gunAlertInd = createToggle("GunDropAlert", "Gun Drop Alert")
-U.gunAlertBtn.MouseButton1Click:Connect(function()
-    S.gunDropAlert = not S.gunDropAlert
-    if S.gunDropAlert then setOn(U.gunAlertBtn, U.gunAlertInd) else setOff(U.gunAlertBtn, U.gunAlertInd) end
-end)
-
-createSectionTitle("OVERLAYS")
-
-U.killerAlarmBtn, U.killerAlarmInd = createToggle("KillerAlarm", "Killer Alarm (30 studs, closer only)")
-U.killerAlarmBtn.MouseButton1Click:Connect(function()
-    S.killerAlarmOn = not S.killerAlarmOn
-    if S.killerAlarmOn then
-        setOn(U.killerAlarmBtn, U.killerAlarmInd)
-        S.lastAlarmDist = math.huge
-    else
-        setOff(U.killerAlarmBtn, U.killerAlarmInd)
-        S.lastAlarmDist = math.huge
-    end
-end)
-
-U.camFollowBtn, U.camFollowInd = createToggle("CameraFollowMurderer", "Camera Follow Murderer")
-U.camFollowBtn.MouseButton1Click:Connect(function()
-    S.cameraFollowMurderer = not S.cameraFollowMurderer
-    if S.cameraFollowMurderer then setOn(U.camFollowBtn, U.camFollowInd) else setOff(U.camFollowBtn, U.camFollowInd) end
-end)
-
-U.crosshairBtn, U.crosshairInd = createToggle("Crosshair", "Rainbow Crosshair (follows mouse)")
-U.crosshairBtn.MouseButton1Click:Connect(function()
-    S.crosshairOn = not S.crosshairOn
-    if S.crosshairOn then
-        setOn(U.crosshairBtn, U.crosshairInd)
-        if S.crosshairGui then S.crosshairGui.Enabled = true end
-    else
-        setOff(U.crosshairBtn, U.crosshairInd)
-        if S.crosshairGui then S.crosshairGui.Enabled = false end
-    end
-end)
-
-createSectionTitle("TRAILS")
-
-U.killerTrailBtn, U.killerTrailInd = createToggle("KillerTrail", "Killer Trail")
-U.killerTrailBtn.MouseButton1Click:Connect(function()
-    S.killerTrailOn = not S.killerTrailOn
-    if S.killerTrailOn then setOn(U.killerTrailBtn, U.killerTrailInd) else setOff(U.killerTrailBtn, U.killerTrailInd) end
-end)
-
-U.sheriffTrailBtn, U.sheriffTrailInd = createToggle("SheriffTrail", "Sheriff Trail")
-U.sheriffTrailBtn.MouseButton1Click:Connect(function()
-    S.sheriffTrailOn = not S.sheriffTrailOn
-    if S.sheriffTrailOn then setOn(U.sheriffTrailBtn, U.sheriffTrailInd) else setOff(U.sheriffTrailBtn, U.sheriffTrailInd) end
-end)
-
-U.heroTrailBtn, U.heroTrailInd = createToggle("HeroTrail", "Hero Trail")
-U.heroTrailBtn.MouseButton1Click:Connect(function()
-    S.heroTrailOn = not S.heroTrailOn
-    if S.heroTrailOn then setOn(U.heroTrailBtn, U.heroTrailInd) else setOff(U.heroTrailBtn, U.heroTrailInd) end
-end)
-
 createSectionTitle("SERVER")
 
 U.rejoinBtn = createActionButton("Rejoin", "Rejoin Server")
@@ -1933,7 +2072,7 @@ U.hopBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ============================================================
--- resetAllToggles
+-- resetAllToggles (defined after all UI exists)
 -- ============================================================
 local function resetAllToggles(silent)
     if S.noclip then
@@ -1959,6 +2098,15 @@ local function resetAllToggles(silent)
         if st then
             S.espEnabled[r] = false
             if espButtons[r] then setOff(espButtons[r].Button, espButtons[r].Indicator) end
+        end
+    end
+    if S.rainbowSelfESP then
+        S.rainbowSelfESP = false
+        setOff(U.selfRainbowBtn, U.selfRainbowInd)
+        local c = player.Character
+        if c then
+            local h = c:FindFirstChild("SelfRainbowESP")
+            if h then h:Destroy() end
         end
     end
     if S.gunESPEnabled then
@@ -1987,6 +2135,7 @@ local function resetAllToggles(silent)
         S.roundActiveSheriff = false
     end
     if S.autoKillAll then S.autoKillAll = false setOff(U.autoKillBtn, U.autoKillInd) end
+    if S.autoPlayOn then S.autoPlayOn = false setOff(U.autoPlayBtn, U.autoPlayInd) end
     if S.autoGunTP then
         S.autoGunTP = false
         setOff(U.autoGunBtn, U.autoGunInd)
@@ -1999,7 +2148,7 @@ local function resetAllToggles(silent)
         setOff(U.afkBtn, U.afkInd)
         if S.antiAfkConn then S.antiAfkConn:Disconnect() S.antiAfkConn = nil end
     end
-    if S.killerAlarmOn then S.killerAlarmOn = false setOff(U.killerAlarmBtn, U.killerAlarmInd) end
+    if S.murdererAlarmOn then S.murdererAlarmOn = false setOff(U.murdererAlarmBtn, U.murdererAlarmInd) end
     if S.cameraFollowMurderer then S.cameraFollowMurderer = false setOff(U.camFollowBtn, U.camFollowInd) end
     if S.crosshairOn then
         S.crosshairOn = false
@@ -2007,11 +2156,10 @@ local function resetAllToggles(silent)
         if S.crosshairGui then S.crosshairGui.Enabled = false end
     end
     if S.gunDropAlert then S.gunDropAlert = false setOff(U.gunAlertBtn, U.gunAlertInd) end
-    if S.killerTrailOn then S.killerTrailOn = false setOff(U.killerTrailBtn, U.killerTrailInd) end
+    if S.murdererTrailOn then S.murdererTrailOn = false setOff(U.murdererTrailBtn, U.murdererTrailInd) end
     if S.sheriffTrailOn then S.sheriffTrailOn = false setOff(U.sheriffTrailBtn, U.sheriffTrailInd) end
     if S.heroTrailOn then S.heroTrailOn = false setOff(U.heroTrailBtn, U.heroTrailInd) end
     if S.killSoundOn then S.killSoundOn = false setOff(U.killSoundBtn, U.killSoundInd) end
-    if S.autoPlayOn then S.autoPlayOn = false setOff(U.autoPlayBtn, U.autoPlayInd) end
     if S.autoFarmOn then
         S.autoFarmOn = false
         setOff(U.autoFarmBtn, U.autoFarmInd)
@@ -2020,6 +2168,7 @@ local function resetAllToggles(silent)
         S.safeSpot = nil
         S.fleeUntil = 0
         S.recentCoins = {}
+        S.currentFarmCoin = nil
         S.lastFarmTP = 0
         S.lastFleeTP = 0
         if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
@@ -2180,7 +2329,7 @@ local function runPostBagAction()
     local isSheriff  = (SheriffName == player.Name)
 
     if isMurderer then
-        sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — Murderer: killing all", SOUNDS.success)
+        sendNotification("Auto Farm", "Bag full — Murderer: killing all", SOUNDS.success)
         pcall(killAllPlayers)
         S.postBagActionDone = true
         return
@@ -2188,11 +2337,11 @@ local function runPostBagAction()
 
     if isSheriff then
         if MurdererName then
-            sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — Sheriff: shooting murderer", SOUNDS.success)
+            sendNotification("Auto Farm", "Bag full — Sheriff: shooting murderer", SOUNDS.success)
             local ok, killed = pcall(shootMurderer)
             if ok and killed then S.postBagActionDone = true end
         else
-            sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — no murderer, going safe", SOUNDS.notify)
+            sendNotification("Auto Farm", "Bag full — no murderer, going safe", SOUNDS.notify)
             goToSafeSpot()
             S.postBagActionDone = true
         end
@@ -2200,23 +2349,27 @@ local function runPostBagAction()
     end
 
     if tryGrabDroppedGun() then
-        sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — grabbed gun, shooting murderer", SOUNDS.success)
+        sendNotification("Auto Farm", "Bag full — grabbed gun, shooting murderer", SOUNDS.success)
         task.wait(0.3)
         local ok, killed = pcall(shootMurderer)
         S.postBagActionDone = (ok and killed) or false
     else
-        sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — no gun, teleporting to safe spot", SOUNDS.notify)
+        sendNotification("Auto Farm", "Bag full — no gun, teleporting to safe spot", SOUNDS.notify)
         goToSafeSpot()
         S.postBagActionDone = true
     end
 end
 
--- Fast auto farm — throttled to 0.4s between teleports to stay under anti-cheat radar.
+-- Anti-kick auto farm:
+--   1. Wait for the coin we already touched to despawn (natural pacing)
+--   2. Enforce 0.6s hard floor between teleports
+--   3. Small random jitter so identical teleports don't repeat
+--   4. Skip coins that are within 30 studs XZ of the murderer
 local function autoFarmCoins()
     if not S.autoFarmOn then return end
-
-    -- Flee mode: murderer nearby, stay hidden and skip farming
     if tick() < S.fleeUntil then return end
+    -- Don't collide with the flee teleport that just happened
+    if tick() - S.lastFleeTP < 0.5 then return end
 
     local c = player.Character
     if not c then return end
@@ -2228,7 +2381,7 @@ local function autoFarmCoins()
     if isBagFull() then
         if not S.autoFarmBagFullNotified then
             S.autoFarmBagFullNotified = true
-            sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — running role action", SOUNDS.notify)
+            sendNotification("Auto Farm", "Bag full — running role action", SOUNDS.notify)
         end
         runPostBagAction()
         return
@@ -2239,20 +2392,25 @@ local function autoFarmCoins()
     local container = getCoinContainer()
     if not container then return end
 
-    -- Release any leftover under-map anchor before farming
     if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
 
-    -- Enforce a minimum interval between teleports to avoid anti-cheat kicks
-    if tick() - S.lastFarmTP < S.FARM_TP_INTERVAL then return end
-
-    -- Clean up old recently-visited coin entries when the coin is gone
-    for coin, _ in pairs(S.recentCoins) do
-        if not coin or not coin.Parent then
-            S.recentCoins[coin] = nil
+    -- Wait for last coin to despawn before touching the next (this is the pacing)
+    if S.currentFarmCoin then
+        if S.currentFarmCoin.Parent and (tick() - S.currentFarmTAt) < 2.5 then
+            return
         end
+        S.currentFarmCoin = nil
     end
 
-    -- Murderer XZ position for coin filtering
+    -- Hard floor between teleports
+    if tick() - S.lastFarmTP < S.FARM_TP_INTERVAL then return end
+
+    -- Clean stale entries
+    for coin, _ in pairs(S.recentCoins) do
+        if not coin or not coin.Parent then S.recentCoins[coin] = nil end
+    end
+
+    -- Murderer XZ for coin filtering
     local mXZ = nil
     if MurdererName and MurdererName ~= player.Name then
         local m = Players:FindFirstChild(MurdererName)
@@ -2262,7 +2420,6 @@ local function autoFarmCoins()
         end
     end
 
-    -- Find nearest coin we haven't visited and that isn't near the murderer
     local nearest = nil
     local nearestDist = math.huge
     for _, coin in ipairs(container:GetChildren()) do
@@ -2282,14 +2439,20 @@ local function autoFarmCoins()
 
     if not nearest then return end
 
-    S.recentCoins[nearest] = tick()
-    S.lastFarmTP = tick()
-    hrp.CFrame = CFrame.new(nearest.Position + Vector3.new(0, 2, 0))
+    local now = tick()
+    S.recentCoins[nearest] = now
+    S.lastFarmTP = now
+    S.currentFarmCoin = nearest
+    S.currentFarmTAt = now
+
+    -- Small random jitter so every teleport has slightly different coords
+    local jitter = Vector3.new((math.random() - 0.5) * 2, 0, (math.random() - 0.5) * 2)
+    hrp.CFrame = CFrame.new(nearest.Position + Vector3.new(0, 2, 0) + jitter)
     hrp.Velocity = Vector3.zero
     hrp.AssemblyLinearVelocity = Vector3.zero
 end
 
--- Flee check heartbeat: reacts fast when murderer gets close.
+-- Flee check — heartbeat reacts within one frame to murderer getting close
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.autoFarmOn then return end
@@ -2300,165 +2463,31 @@ RunService.Heartbeat:Connect(function()
     local hum = c:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return end
 
-    -- Only flee from murderer (if we ARE murderer, don't flee from ourselves)
     if not MurdererName or MurdererName == player.Name then return end
     local m = Players:FindFirstChild(MurdererName)
     if not m or not m.Character then return end
     local mr = m.Character:FindFirstChild("HumanoidRootPart")
     if not mr then return end
 
-    -- Use XZ distance so Y offset from being under map doesn't matter
     local hrpXZ = Vector2.new(hrp.Position.X, hrp.Position.Z)
     local mrXZ = Vector2.new(mr.Position.X, mr.Position.Z)
     local distXZ = (hrpXZ - mrXZ).Magnitude
 
-    -- Extend flee while murderer is still close (XZ)
     if S.fleeUntil > tick() and distXZ < S.FLEE_KEEP_DIST then
         S.fleeUntil = math.max(S.fleeUntil, tick() + 0.5)
     end
 
-    -- Trigger fresh flee
     if distXZ <= S.FLEE_TRIGGER_DIST and tick() >= S.fleeUntil then
-        -- Throttle flee teleports too
+        -- Don't stack flee immediately after a farm teleport (anti-kick)
+        if tick() - S.lastFarmTP < 0.5 then return end
         if tick() - S.lastFleeTP < S.FLEE_TP_INTERVAL then return end
         S.lastFleeTP = tick()
         S.fleeUntil = tick() + 1.5
+        S.currentFarmCoin = nil
         anchorUnderMap(hrp)
         sendNotification("Auto Farm", "Murderer within " .. math.floor(distXZ) .. " studs — hiding!", SOUNDS.alert)
     end
 end)
-
--- ============================================================
--- CONFIG TAB
--- ============================================================
-currentParent = U.tabFrames.Config
-createSectionTitle("CONFIG PRESETS")
-
-local function applyPvpPreset()
-    if not S.antiAfkEnabled then
-        S.antiAfkEnabled = true
-        setOn(U.afkBtn, U.afkInd)
-        if S.antiAfkConn then S.antiAfkConn:Disconnect() end
-        S.antiAfkConn = player.Idled:Connect(function()
-            local VU = game:GetService("VirtualUser")
-            VU:CaptureController()
-            VU:ClickButton2(Vector2.new())
-        end)
-    end
-    if not S.antiVoidEnabled then S.antiVoidEnabled = true setOn(U.avBtn, U.avInd) end
-    if not S.antiFlingEnabled then S.antiFlingEnabled = true setOn(U.afBtn, U.afInd) end
-    for r, st in pairs(S.espEnabled) do
-        if not st then
-            S.espEnabled[r] = true
-            if espButtons[r] then
-                espButtons[r].Button.BackgroundColor3 = ROLE_COLORS[r]:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-                espButtons[r].Indicator.BackgroundColor3 = ROLE_COLORS[r]
-            end
-        end
-    end
-    if not S.gunESPEnabled then
-        S.gunESPEnabled = true
-        U.gunBtn.BackgroundColor3 = GUN_COLOR:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-        U.gunInd.BackgroundColor3 = GUN_COLOR
-    end
-    if not S.noclip then
-        S.noclip = true
-        setOn(U.noclipBtn, U.noclipInd)
-        S.originalCollision = {}
-        if player.Character then
-            for _, o in ipairs(player.Character:GetDescendants()) do
-                if o:IsA("BasePart") then
-                    S.originalCollision[o] = o.CanCollide
-                    o.CanCollide = false
-                end
-            end
-        end
-    end
-    if not S.autoNotifyRoles then S.autoNotifyRoles = true setOn(U.autoNotBtn, U.autoNotInd) end
-    if not S.autoKillAll then S.autoKillAll = true setOn(U.autoKillBtn, U.autoKillInd) end
-    if not S.killerAlarmOn then
-        S.killerAlarmOn = true
-        S.lastAlarmDist = math.huge
-        setOn(U.killerAlarmBtn, U.killerAlarmInd)
-    end
-    if not S.crosshairOn then
-        S.crosshairOn = true
-        setOn(U.crosshairBtn, U.crosshairInd)
-        if S.crosshairGui then S.crosshairGui.Enabled = true end
-    end
-    if not S.gunDropAlert then S.gunDropAlert = true setOn(U.gunAlertBtn, U.gunAlertInd) end
-    if not S.notifyRoundStart then S.notifyRoundStart = true setOn(U.rStartBtn, U.rStartInd) end
-    if not S.notifyRoundEnd then S.notifyRoundEnd = true setOn(U.rEndBtn, U.rEndInd) end
-    if not S.playerJoinLeaveNotify then S.playerJoinLeaveNotify = true setOn(U.plBtn, U.plInd) end
-    if not S.killSoundOn then S.killSoundOn = true setOn(U.killSoundBtn, U.killSoundInd) end
-    sendNotification("MM2 Menu", "PVP Ready preset applied")
-end
-
-U.pvpPresetBtn = createActionButton("PvpPreset", "Apply PVP Ready")
-U.pvpPresetBtn.BackgroundColor3 = Color3.fromRGB(45, 65, 45)
-U.pvpPresetBtn.MouseButton1Click:Connect(applyPvpPreset)
-
-createSectionTitle("COIN FARM")
-local afInfo = Instance.new("TextLabel")
-afInfo.Size = UDim2.new(1, 0, 0, 130)
-afInfo.BackgroundTransparency = 1
-afInfo.Text = "Auto Farm teleports to coins and forces Anti AFK on.\nWhen your bag hits 40 coins it automatically does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab dropped gun & shoot, else hide at safe spot\n\nIf the murderer gets within 8 studs while farming,\nyou instantly hide under the map until they leave.\nTeleports throttled to prevent anti-cheat kicks."
-afInfo.TextColor3 = Color3.fromRGB(150, 153, 165)
-afInfo.TextSize = 11
-afInfo.Font = Enum.Font.Gotham
-afInfo.TextXAlignment = Enum.TextXAlignment.Left
-afInfo.TextYAlignment = Enum.TextYAlignment.Top
-afInfo.LayoutOrder = getLayoutOrder()
-afInfo.Parent = currentParent
-
-U.autoFarmBtn, U.autoFarmInd = createToggle("AutoFarm", "Auto Farm (Coins + Role Action)")
-U.autoFarmBtn.MouseButton1Click:Connect(function()
-    S.autoFarmOn = not S.autoFarmOn
-    if S.autoFarmOn then
-        setOn(U.autoFarmBtn, U.autoFarmInd)
-
-        if not S.antiAfkEnabled then
-            S.antiAfkEnabled = true
-            setOn(U.afkBtn, U.afkInd)
-            if S.antiAfkConn then S.antiAfkConn:Disconnect() end
-            S.antiAfkConn = player.Idled:Connect(function()
-                local VU = game:GetService("VirtualUser")
-                VU:CaptureController()
-                VU:ClickButton2(Vector2.new())
-            end)
-        end
-
-        S.autoFarmBagFullNotified = false
-        S.postBagActionDone = false
-        S.safeSpot = nil
-        S.fleeUntil = 0
-        S.recentCoins = {}
-        S.lastFarmTP = 0
-        S.lastFleeTP = 0
-        sendNotification("MM2 Menu", "Auto Farm ON — collecting coins", SOUNDS.success)
-    else
-        setOff(U.autoFarmBtn, U.autoFarmInd)
-        S.postBagActionDone = false
-        S.safeSpot = nil
-        S.fleeUntil = 0
-        S.recentCoins = {}
-        if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
-        sendNotification("MM2 Menu", "Auto Farm OFF")
-    end
-end)
-
-createSectionTitle("PRESET INFO")
-local pInfo = Instance.new("TextLabel")
-pInfo.Size = UDim2.new(1, 0, 0, 170)
-pInfo.BackgroundTransparency = 1
-pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Rainbow Crosshair\n- Gun Drop Alert\n- Round Start / End Notify\n- Player Join/Leave Alerts\n- Kill Sound"
-pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
-pInfo.TextSize = 11
-pInfo.Font = Enum.Font.Gotham
-pInfo.TextXAlignment = Enum.TextXAlignment.Left
-pInfo.TextYAlignment = Enum.TextYAlignment.Top
-pInfo.LayoutOrder = getLayoutOrder()
-pInfo.Parent = currentParent
 
 -- ============================================================
 -- ESP SYSTEM
@@ -2508,7 +2537,7 @@ local function getRoles()
     if not GetPlayerData then
         if not warnedNoRemote then
             warnedNoRemote = true
-            sendNotification("MM2 Menu", "GetPlayerData remote not found - role features disabled", SOUNDS.alert)
+            sendNotification("MM2 Menu", "GetPlayerData remote not found", SOUNDS.alert)
         end
         return
     end
@@ -2585,6 +2614,7 @@ local function getRoles()
         S.autoFarmBagFullNotified = false
         S.fleeUntil = 0
         S.recentCoins = {}
+        S.currentFarmCoin = nil
     end
 
     roundEvents()
@@ -2727,7 +2757,7 @@ local function updateTrails()
             local isM = MurdererName and t.Name == MurdererName
             local isS = SheriffName and t.Name == SheriffName
             local isH = HeroName and t.Name == HeroName
-            if isM and S.killerTrailOn and isAlive(t) then
+            if isM and S.murdererTrailOn and isAlive(t) then
                 attachTrail(t, ROLE_COLORS.Murderer)
             elseif isS and S.sheriffTrailOn and isAlive(t) then
                 attachTrail(t, ROLE_COLORS.Sheriff)
@@ -2905,7 +2935,7 @@ end
 
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
-    if not S.killerAlarmOn or not MurdererName then
+    if not S.murdererAlarmOn or not MurdererName then
         S.lastAlarmDist = math.huge
         return
     end
@@ -2990,14 +3020,41 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- ============================================================
--- ANTI-VOID (early trigger + velocity pre-emptive rescue)
--- ============================================================
+-- Speedhack driver (BodyVelocity, WalkSpeed stays at 16)
+RunService.RenderStepped:Connect(function()
+    if not S.speedhackEnabled then return end
+    if S.flyEnabled then
+        if speedBV then speedBV.Velocity = Vector3.zero end
+        return
+    end
+    local c = player.Character
+    if not c then return end
+    local r = c:FindFirstChild("HumanoidRootPart")
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if not r or not h then return end
+    if not speedBV or speedBV.Parent ~= r then
+        if speedBV then speedBV:Destroy() end
+        speedBV = Instance.new("BodyVelocity")
+        speedBV.MaxForce = Vector3.new(9e9, 0, 9e9)
+        speedBV.P = 4000
+        speedBV.Parent = r
+    end
+    h.WalkSpeed = 16
+    local move = h.MoveDirection
+    local flat = Vector3.new(move.X, 0, move.Z)
+    local vy = r.AssemblyLinearVelocity.Y
+    if flat.Magnitude > 0.01 then
+        speedBV.Velocity = flat.Unit * S.speedhackSpeed + Vector3.new(0, vy, 0)
+    else
+        speedBV.Velocity = Vector3.new(0, vy, 0)
+    end
+end)
+
+-- Anti-Void (early trigger + velocity pre-emptive rescue)
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.antiVoidEnabled or S.antiVoidCooldown then return end
     if S.flyEnabled then return end
-    -- Don't fight the auto-gun / flee anchor
     if gunTpAnchor and gunTpAnchor.Parent then return end
 
     local c = player.Character
@@ -3072,6 +3129,7 @@ player.CharacterAdded:Connect(function(character)
     S.safeSpot = nil
     S.fleeUntil = 0
     S.recentCoins = {}
+    S.currentFarmCoin = nil
     S.lastFarmTP = 0
     S.lastFleeTP = 0
     if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
@@ -3091,7 +3149,6 @@ player.CharacterAdded:Connect(function(character)
         h.PlatformStand = false
         h.WalkSpeed = 16
     end
-    -- Restart speedhack if it was on before respawn
     if S.speedhackEnabled then
         local r = character:FindFirstChild("HumanoidRootPart")
         if r then
@@ -3355,7 +3412,7 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 -- ============================================================
--- RAINBOW ANIMATION
+-- RAINBOW ANIMATION (+ Self ESP colour)
 -- ============================================================
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
@@ -3370,10 +3427,27 @@ RunService.Heartbeat:Connect(function()
         U.crosshairV.BackgroundColor3 = color
         U.crosshairDot.BackgroundColor3 = Color3.fromHSV((hue + 0.5) % 1, 1, 1)
     end
+    -- Self Rainbow ESP
+    if S.rainbowSelfESP then
+        local c = player.Character
+        if c then
+            local h = c:FindFirstChild("SelfRainbowESP")
+            if not h then
+                h = Instance.new("Highlight")
+                h.Name = "SelfRainbowESP"
+                h.FillTransparency = 0.4
+                h.OutlineTransparency = 0
+                h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                h.Parent = c
+            end
+            h.FillColor = color
+            h.OutlineColor = Color3.fromHSV((hue + 0.5) % 1, 1, 1)
+        end
+    end
 end)
 
 -- ============================================================
--- AUTO FARM LOOP (0.2s — checks teleport cooldown inside)
+-- AUTO FARM LOOP (0.2s tick — pacing enforced inside)
 -- ============================================================
 task.spawn(function()
     while U.gui and U.gui.Parent and not S.scriptClosed do
@@ -3385,7 +3459,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- MAIN UPDATE LOOP (0.1s — general checks)
+-- MAIN UPDATE LOOP
 -- ============================================================
 task.spawn(function()
     while U.gui and U.gui.Parent and not S.scriptClosed do
