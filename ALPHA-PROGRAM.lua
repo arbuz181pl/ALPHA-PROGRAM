@@ -1,4 +1,4 @@
---// MM2 MENU BY ARBUZ v1
+--// MM2 MENU BY ARBUZ v1.2
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -26,13 +26,12 @@ local S = {
     autoSendMurdererChat = false, autoSendSheriffChat = false, antiVoidEnabled = false,
     antiFlingEnabled = false, antiAfkEnabled = false, antiAfkConn = nil,
     playerDistanceOn = false, playerDistBillboards = {},
-    killerAlarmOn = false, killerAlarmCooldown = 0,
-    roundTimerOn = false, roundTimerStart = 0, roundTimerLabel = nil,
+    killerAlarmOn = false, lastAlarmDist = math.huge,
     crosshairOn = false, crosshairGui = nil,
     keybindsEnabled = true, scriptClosed = false,
     lastTouchPos = nil,
     gunDropAlert = false, lastGunDropped = false,
-    notifyRoundStart = false, notifyRoundEnd = false, notifyPreRoundEnd = false, preRoundEndFired = false,
+    notifyRoundStart = false, notifyRoundEnd = false,
     playerJoinLeaveNotify = false,
     menuOpacity = 100,
     killerTrailOn = false, sheriffTrailOn = false, heroTrailOn = false,
@@ -83,7 +82,6 @@ local lastNotifiedSheriff = nil
 local lastNotifiedHero = nil
 local noMurdererSince = nil
 local ROUND_END_DEBOUNCE = 2.0
-local ROUND_TIME = 150
 
 local GetPlayerData = nil
 pcall(function() GetPlayerData = ReplicatedStorage:FindFirstChild("GetPlayerData", true) end)
@@ -165,7 +163,7 @@ U.title = Instance.new("TextLabel")
 U.title.Size = UDim2.new(1, -120, 1, 0)
 U.title.Position = UDim2.fromOffset(10, 0)
 U.title.BackgroundTransparency = 1
-U.title.Text = "MM2 MENU BY ARBUZ v1"
+U.title.Text = "MM2 MENU BY ARBUZ v1.2"
 U.title.TextColor3 = Color3.fromRGB(255, 255, 255)
 U.title.TextSize = 13
 U.title.Font = Enum.Font.GothamBold
@@ -1057,12 +1055,6 @@ U.rEndBtn.MouseButton1Click:Connect(function()
     if S.notifyRoundEnd then setOn(U.rEndBtn, U.rEndInd) else setOff(U.rEndBtn, U.rEndInd) end
 end)
 
-U.rPreBtn, U.rPreInd = createToggle("NotifyPreRoundEnd", "Notify 10s Before Round End")
-U.rPreBtn.MouseButton1Click:Connect(function()
-    S.notifyPreRoundEnd = not S.notifyPreRoundEnd
-    if S.notifyPreRoundEnd then setOn(U.rPreBtn, U.rPreInd) else setOff(U.rPreBtn, U.rPreInd) end
-end)
-
 U.plBtn, U.plInd = createToggle("PlayerJoinLeaveNotify", "Player Join/Leave Alerts")
 U.plBtn.MouseButton1Click:Connect(function()
     S.playerJoinLeaveNotify = not S.playerJoinLeaveNotify
@@ -1167,7 +1159,6 @@ local function attackTarget(t)
     end
 end
 
--- FIXED killAllPlayers: skip spawn + 3 passes for reliability
 local function killAllPlayers()
     local c = player.Character
     if not c then return end
@@ -1188,7 +1179,6 @@ local function killAllPlayers()
         return list
     end
 
-    -- Pass 1
     for _, tr in ipairs(getTargets()) do
         if tr and tr.Parent then
             mr.CFrame = tr.CFrame * CFrame.new(0, 0, 1.5)
@@ -1196,7 +1186,6 @@ local function killAllPlayers()
             pcall(function() k:Activate() end)
         end
     end
-    -- Pass 2
     task.wait(0.15)
     for _, tr in ipairs(getTargets()) do
         if tr and tr.Parent then
@@ -1205,7 +1194,6 @@ local function killAllPlayers()
             pcall(function() k:Activate() end)
         end
     end
-    -- Pass 3
     task.wait(0.15)
     for _, tr in ipairs(getTargets()) do
         if tr and tr.Parent then
@@ -1689,23 +1677,15 @@ end)
 
 createSectionTitle("OVERLAYS")
 
-U.killerAlarmBtn, U.killerAlarmInd = createToggle("KillerAlarm", "Killer Alarm (50 studs)")
+U.killerAlarmBtn, U.killerAlarmInd = createToggle("KillerAlarm", "Killer Alarm (30 studs, closer only)")
 U.killerAlarmBtn.MouseButton1Click:Connect(function()
     S.killerAlarmOn = not S.killerAlarmOn
-    if S.killerAlarmOn then setOn(U.killerAlarmBtn, U.killerAlarmInd) else setOff(U.killerAlarmBtn, U.killerAlarmInd) end
-end)
-
-U.roundTimerBtn, U.roundTimerInd = createToggle("RoundTimer", "Round Timer")
-U.roundTimerBtn.MouseButton1Click:Connect(function()
-    S.roundTimerOn = not S.roundTimerOn
-    if S.roundTimerOn then
-        setOn(U.roundTimerBtn, U.roundTimerInd)
-        S.roundTimerLabel.Visible = true
-        S.roundTimerStart = tick()
-        S.preRoundEndFired = false
+    if S.killerAlarmOn then
+        setOn(U.killerAlarmBtn, U.killerAlarmInd)
+        S.lastAlarmDist = math.huge
     else
-        setOff(U.roundTimerBtn, U.roundTimerInd)
-        S.roundTimerLabel.Visible = false
+        setOff(U.killerAlarmBtn, U.killerAlarmInd)
+        S.lastAlarmDist = math.huge
     end
 end)
 
@@ -1838,11 +1818,6 @@ local function resetAllToggles()
         if S.antiAfkConn then S.antiAfkConn:Disconnect() S.antiAfkConn = nil end
     end
     if S.killerAlarmOn then S.killerAlarmOn = false setOff(U.killerAlarmBtn, U.killerAlarmInd) end
-    if S.roundTimerOn then
-        S.roundTimerOn = false
-        setOff(U.roundTimerBtn, U.roundTimerInd)
-        S.roundTimerLabel.Visible = false
-    end
     if S.cameraFollowMurderer then S.cameraFollowMurderer = false setOff(U.camFollowBtn, U.camFollowInd) end
     if S.crosshairOn then
         S.crosshairOn = false
@@ -1900,25 +1875,6 @@ do
 end
 
 -- ============================================================
--- ROUND TIMER LABEL
--- ============================================================
-S.roundTimerLabel = Instance.new("TextLabel")
-S.roundTimerLabel.Name = "RoundTimer"
-S.roundTimerLabel.Size = UDim2.fromOffset(100, 32)
-S.roundTimerLabel.Position = UDim2.new(0.5, -50, 0, 20)
-S.roundTimerLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-S.roundTimerLabel.BackgroundTransparency = 0.3
-S.roundTimerLabel.BorderSizePixel = 0
-S.roundTimerLabel.Text = "2:30"
-S.roundTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-S.roundTimerLabel.TextSize = 20
-S.roundTimerLabel.Font = Enum.Font.GothamBold
-S.roundTimerLabel.Visible = false
-S.roundTimerLabel.ZIndex = 100
-S.roundTimerLabel.Parent = U.gui
-do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = S.roundTimerLabel end
-
--- ============================================================
 -- CONFIG TAB
 -- ============================================================
 currentParent = U.tabFrames.Config
@@ -1966,12 +1922,10 @@ local function applyPvpPreset()
     end
     if not S.autoNotifyRoles then S.autoNotifyRoles = true setOn(U.autoNotBtn, U.autoNotInd) end
     if not S.autoKillAll then S.autoKillAll = true setOn(U.autoKillBtn, U.autoKillInd) end
-    if not S.killerAlarmOn then S.killerAlarmOn = true setOn(U.killerAlarmBtn, U.killerAlarmInd) end
-    if not S.roundTimerOn then
-        S.roundTimerOn = true
-        setOn(U.roundTimerBtn, U.roundTimerInd)
-        S.roundTimerLabel.Visible = true
-        S.roundTimerStart = tick()
+    if not S.killerAlarmOn then
+        S.killerAlarmOn = true
+        S.lastAlarmDist = math.huge
+        setOn(U.killerAlarmBtn, U.killerAlarmInd)
     end
     if not S.crosshairOn then
         S.crosshairOn = true
@@ -1990,7 +1944,7 @@ createSectionTitle("PRESET INFO")
 local pInfo = Instance.new("TextLabel")
 pInfo.Size = UDim2.new(1, 0, 0, 140)
 pInfo.BackgroundTransparency = 1
-pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (50 studs)\n- Round Timer\n- Rainbow Crosshair\n- Gun Drop Alert"
+pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Rainbow Crosshair\n- Gun Drop Alert"
 pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
 pInfo.TextSize = 11
 pInfo.Font = Enum.Font.Gotham
@@ -2123,21 +2077,19 @@ local function getRoles()
 
     roundEvents()
 
+    -- FIX: only fire ONCE per new murderer (not when sheriff appears later)
     if S.autoNotifyRoles and MurdererName then
-        local changed = MurdererName ~= lastNotifiedMurderer
-            or (SheriffName and SheriffName ~= lastNotifiedSheriff)
-            or (HeroName and HeroName ~= lastNotifiedHero)
-        if S.pendingNotify then
-            if tick() - S.pendingNotifySince >= 1.0 then
+        if MurdererName ~= lastNotifiedMurderer then
+            if not S.pendingNotify then
+                S.pendingNotify = true
+                S.pendingNotifySince = tick()
+            elseif tick() - S.pendingNotifySince >= 1.5 then
                 lastNotifiedMurderer = MurdererName
                 lastNotifiedSheriff = SheriffName
                 lastNotifiedHero = HeroName
                 S.pendingNotify = false
                 notifyAllRoles()
             end
-        elseif changed then
-            S.pendingNotify = true
-            S.pendingNotifySince = tick()
         end
     end
 end
@@ -2412,11 +2364,13 @@ local function checkAutoChat()
     end
 end
 
+-- Killer Alarm — 30 studs, only fires when getting closer
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
-    if not S.killerAlarmOn or not MurdererName then return end
-    local now = tick()
-    if now - S.killerAlarmCooldown < 2 then return end
+    if not S.killerAlarmOn or not MurdererName then
+        S.lastAlarmDist = math.huge
+        return
+    end
     local me = player.Character
     if not me then return end
     local myRoot = me:FindFirstChild("HumanoidRootPart")
@@ -2426,27 +2380,13 @@ RunService.Heartbeat:Connect(function()
     local mRoot = m.Character:FindFirstChild("HumanoidRootPart")
     if not mRoot then return end
     local dist = (myRoot.Position - mRoot.Position).Magnitude
-    if dist <= 50 then
-        S.killerAlarmCooldown = now
+    if dist > 30 then
+        S.lastAlarmDist = math.huge
+        return
+    end
+    if dist < S.lastAlarmDist - 3 then
+        S.lastAlarmDist = dist
         sendNotification("⚠ MURDERER NEAR", "Murderer is " .. math.floor(dist) .. " studs away!", SOUNDS.alert)
-    end
-end)
-
-RunService.Heartbeat:Connect(function()
-    if S.scriptClosed then return end
-    if not S.roundTimerOn or not S.roundTimerLabel then return end
-    local elapsed = tick() - S.roundTimerStart
-    local remaining = math.max(0, ROUND_TIME - elapsed)
-    local m = math.floor(remaining / 60)
-    local s = math.floor(remaining % 60)
-    S.roundTimerLabel.Text = string.format("%d:%02d", m, s)
-    if S.notifyPreRoundEnd and not S.preRoundEndFired and remaining <= 10 and remaining > 0 then
-        S.preRoundEndFired = true
-        sendNotification("Round Ending", "Round ends in 10 seconds", SOUNDS.alert)
-    end
-    if remaining <= 0 then
-        S.roundTimerStart = tick()
-        S.preRoundEndFired = false
     end
 end)
 
