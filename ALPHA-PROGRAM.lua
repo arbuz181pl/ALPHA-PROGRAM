@@ -18,6 +18,9 @@ local S = {
     autoSendMurdererChat = false, autoSendSheriffChat = false, antiVoidEnabled = false,
     antiFlingEnabled = false, antiAfkEnabled = false, antiAfkConn = nil,
     playerDistanceOn = false, playerDistBillboards = {},
+    killerAlarmOn = false, killerAlarmCooldown = 0, killerAlarmConn = nil,
+    roundTimerOn = false, roundTimerStart = 0, roundTimerLabel = nil,
+    spectateKiller = false, crosshairOn = false, crosshairGui = nil,
     flySpeed = 50, speedhackEnabled = false, speedhackSpeed = 45,
     guiLocked = false, flyPanelLocked = false, minimized = false, menuVisible = true,
     espEnabled = { Innocent = false, Murderer = false, Sheriff = false, Hero = false },
@@ -31,30 +34,19 @@ local S = {
     VOID_Y_THRESHOLD = -50, ANTI_FLING_MAX_SPEED = 200, ANTI_FLING_MAX_ANGULAR = 500,
     pendingNotify = false, pendingNotifySince = 0,
     capturingKeybind = false, capturingAction = nil,
+    reopenDragDist = 0,
     keybinds = {
-        fly = Enum.KeyCode.LeftAlt,
-        noclip = Enum.KeyCode.N,
-        speedhack = Enum.KeyCode.Q,
-        infinityJump = Enum.KeyCode.J,
-        autoKillAll = Enum.KeyCode.K,
-        gunESP = Enum.KeyCode.G,
-        murdererESP = Enum.KeyCode.M,
-        sheriffESP = Enum.KeyCode.H,
-        innocentESP = Enum.KeyCode.I,
-        antiVoid = Enum.KeyCode.B,
-        turnOffAll = Enum.KeyCode.Y,
+        fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
+        infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
+        murdererESP = Enum.KeyCode.M, sheriffESP = Enum.KeyCode.H, innocentESP = Enum.KeyCode.I,
+        antiVoid = Enum.KeyCode.B, turnOffAll = Enum.KeyCode.Y,
     },
     keybindList = {
-        {id = "fly", name = "Toggle Fly"},
-        {id = "noclip", name = "Toggle Noclip"},
-        {id = "speedhack", name = "Toggle Speedhack"},
-        {id = "infinityJump", name = "Toggle Infinity Jump"},
-        {id = "autoKillAll", name = "Toggle Auto Kill All"},
-        {id = "gunESP", name = "Toggle Gun ESP"},
-        {id = "murdererESP", name = "Toggle Murderer ESP"},
-        {id = "sheriffESP", name = "Toggle Sheriff ESP"},
-        {id = "innocentESP", name = "Toggle Innocent ESP"},
-        {id = "antiVoid", name = "Toggle Anti Void"},
+        {id = "fly", name = "Toggle Fly"}, {id = "noclip", name = "Toggle Noclip"},
+        {id = "speedhack", name = "Toggle Speedhack"}, {id = "infinityJump", name = "Toggle Infinity Jump"},
+        {id = "autoKillAll", name = "Toggle Auto Kill All"}, {id = "gunESP", name = "Toggle Gun ESP"},
+        {id = "murdererESP", name = "Toggle Murderer ESP"}, {id = "sheriffESP", name = "Toggle Sheriff ESP"},
+        {id = "innocentESP", name = "Toggle Innocent ESP"}, {id = "antiVoid", name = "Toggle Anti Void"},
         {id = "turnOffAll", name = "Turn Off All"},
     },
 }
@@ -73,6 +65,7 @@ local lastNotifiedSheriff = nil
 local lastNotifiedHero = nil
 local noMurdererSince = nil
 local ROUND_END_DEBOUNCE = 2.0
+local ROUND_TIME = 150
 
 local GetPlayerData = nil
 pcall(function() GetPlayerData = ReplicatedStorage:FindFirstChild("GetPlayerData", true) end)
@@ -271,7 +264,7 @@ end
 
 U.tabFrames = {}
 U.tabs = {}
-local tabNames = {"Movement", "ESP", "Notifier", "Murderer", "Sheriff", "Teleport", "Keybinds", "Utility"}
+local tabNames = {"Movement", "ESP", "Notifier", "Murderer", "Sheriff", "Teleport", "Keybinds", "Utility", "Config"}
 
 for _, tabName in ipairs(tabNames) do
     local fr = Instance.new("ScrollingFrame")
@@ -325,7 +318,7 @@ local iOrder = 0
 for _, tabName in ipairs(tabNames) do
     iOrder = iOrder + 1
     local tb = Instance.new("TextButton")
-    tb.Size = UDim2.new(1, 0, 0, 32)
+    tb.Size = UDim2.new(1, 0, 0, 30)
     tb.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
     tb.BorderSizePixel = 0
     tb.Text = tabName
@@ -720,7 +713,6 @@ U.flyBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Fly panel dragging
 local flyDragStart, flyDragStartPos
 FP.header.InputBegan:Connect(function(i)
     if S.flyPanelLocked then return end
@@ -922,7 +914,6 @@ end)
 -- ESP TAB
 -- ============================================================
 currentParent = U.tabFrames.ESP
-
 createSectionTitle("ROLE ESP")
 
 local function makeEspBtn(role)
@@ -1224,21 +1215,32 @@ local function tpGunAndBack()
     return true
 end
 
+-- [FIX] Auto TP gun: after picking up, go DOWN if murderer is near, UP if not
 local function autoTPGunTop()
     local now = tick()
     if now - lastAutoGunTP < 3 then return end
     local c = player.Character
     if not c then return end
-    if c:FindFirstChild("Gun") then return end
-    if c:FindFirstChild("Knife") then return end
+    if c:FindFirstChild("Gun") or c:FindFirstChild("Knife") then return end
     local mr = c:FindFirstChild("HumanoidRootPart")
     if not mr then return end
     local tp = findGunPart()
     if not tp then return end
     lastAutoGunTP = now
     mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
-    task.wait(0.15)
-    mr.CFrame = CFrame.new(tp.Position.X, 300, tp.Position.Z)
+    task.wait(0.2)
+    local safeY = 300
+    if MurdererName then
+        local murd = Players:FindFirstChild(MurdererName)
+        if murd and murd.Character then
+            local mRoot = murd.Character:FindFirstChild("HumanoidRootPart")
+            if mRoot and (mRoot.Position - tp.Position).Magnitude < 100 then
+                safeY = -100
+            end
+        end
+    end
+    mr.CFrame = CFrame.new(tp.Position.X, safeY, tp.Position.Z)
+    mr.Velocity = Vector3.zero
 end
 
 U.autoGunBtn, U.autoGunInd = createToggle("AutoGunTP", "Auto Teleport To Gun")
@@ -1410,6 +1412,15 @@ local function startCapture(id, btn)
     btn.BackgroundColor3 = Color3.fromRGB(80, 60, 40)
 end
 
+local function endCapture()
+    S.capturingKeybind = false
+    S.capturingAction = nil
+    for _, btn in pairs(U.keyButtons) do
+        btn.BackgroundColor3 = Color3.fromRGB(50, 55, 65)
+    end
+    refreshKeyButtons()
+end
+
 for _, entry in ipairs(S.keybindList) do
     local row = Instance.new("Frame")
     row.Size = UDim2.new(1, 0, 0, 34)
@@ -1449,15 +1460,6 @@ for _, entry in ipairs(S.keybindList) do
     end)
 end
 
-local function endCapture()
-    S.capturingKeybind = false
-    S.capturingAction = nil
-    for _, btn in pairs(U.keyButtons) do
-        btn.BackgroundColor3 = Color3.fromRGB(50, 55, 65)
-    end
-    refreshKeyButtons()
-end
-
 -- ============================================================
 -- UTILITY TAB
 -- ============================================================
@@ -1490,6 +1492,45 @@ U.afkBtn.MouseButton1Click:Connect(function()
     else
         setOff(U.afkBtn, U.afkInd)
         if S.antiAfkConn then S.antiAfkConn:Disconnect() S.antiAfkConn = nil end
+    end
+end)
+
+createSectionTitle("OVERLAYS")
+
+U.killerAlarmBtn, U.killerAlarmInd = createToggle("KillerAlarm", "Killer Alarm")
+U.killerAlarmBtn.MouseButton1Click:Connect(function()
+    S.killerAlarmOn = not S.killerAlarmOn
+    if S.killerAlarmOn then setOn(U.killerAlarmBtn, U.killerAlarmInd) else setOff(U.killerAlarmBtn, U.killerAlarmInd) end
+end)
+
+U.roundTimerBtn, U.roundTimerInd = createToggle("RoundTimer", "Round Timer")
+U.roundTimerBtn.MouseButton1Click:Connect(function()
+    S.roundTimerOn = not S.roundTimerOn
+    if S.roundTimerOn then
+        setOn(U.roundTimerBtn, U.roundTimerInd)
+        S.roundTimerLabel.Visible = true
+        S.roundTimerStart = tick()
+    else
+        setOff(U.roundTimerBtn, U.roundTimerInd)
+        S.roundTimerLabel.Visible = false
+    end
+end)
+
+U.spectateBtn, U.spectateInd = createToggle("SpectateKiller", "Spectate Killer")
+U.spectateBtn.MouseButton1Click:Connect(function()
+    S.spectateKiller = not S.spectateKiller
+    if S.spectateKiller then setOn(U.spectateBtn, U.spectateInd) else setOff(U.spectateBtn, U.spectateInd) end
+end)
+
+U.crosshairBtn, U.crosshairInd = createToggle("Crosshair", "Custom Crosshair")
+U.crosshairBtn.MouseButton1Click:Connect(function()
+    S.crosshairOn = not S.crosshairOn
+    if S.crosshairOn then
+        setOn(U.crosshairBtn, U.crosshairInd)
+        if S.crosshairGui then S.crosshairGui.Enabled = true end
+    else
+        setOff(U.crosshairBtn, U.crosshairInd)
+        if S.crosshairGui then S.crosshairGui.Enabled = false end
     end
 end)
 
@@ -1562,6 +1603,18 @@ local function resetAllToggles()
         setOff(U.afkBtn, U.afkInd)
         if S.antiAfkConn then S.antiAfkConn:Disconnect() S.antiAfkConn = nil end
     end
+    if S.killerAlarmOn then S.killerAlarmOn = false setOff(U.killerAlarmBtn, U.killerAlarmInd) end
+    if S.roundTimerOn then
+        S.roundTimerOn = false
+        setOff(U.roundTimerBtn, U.roundTimerInd)
+        S.roundTimerLabel.Visible = false
+    end
+    if S.spectateKiller then S.spectateKiller = false setOff(U.spectateBtn, U.spectateInd) end
+    if S.crosshairOn then
+        S.crosshairOn = false
+        setOff(U.crosshairBtn, U.crosshairInd)
+        if S.crosshairGui then S.crosshairGui.Enabled = false end
+    end
     sendNotification("MM2 Menu", "All features turned off")
 end
 
@@ -1578,6 +1631,76 @@ U.turnOffBtn.LayoutOrder = getLayoutOrder()
 U.turnOffBtn.Parent = currentParent
 do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = U.turnOffBtn end
 U.turnOffBtn.MouseButton1Click:Connect(resetAllToggles)
+
+-- ============================================================
+-- CONFIG TAB
+-- ============================================================
+currentParent = U.tabFrames.Config
+createSectionTitle("CONFIG PRESETS")
+
+local function applyPvpPreset()
+    -- Anti AFK
+    if not S.antiAfkEnabled then
+        S.antiAfkEnabled = true
+        setOn(U.afkBtn, U.afkInd)
+        if S.antiAfkConn then S.antiAfkConn:Disconnect() end
+        S.antiAfkConn = player.Idled:Connect(function()
+            local VU = game:GetService("VirtualUser")
+            VU:CaptureController()
+            VU:ClickButton2(Vector2.new())
+        end)
+    end
+    -- Anti Void
+    if not S.antiVoidEnabled then S.antiVoidEnabled = true setOn(U.avBtn, U.avInd) end
+    -- Anti Fling
+    if not S.antiFlingEnabled then S.antiFlingEnabled = true setOn(U.afBtn, U.afInd) end
+    -- All ESP
+    for r, st in pairs(S.espEnabled) do
+        if not st then
+            S.espEnabled[r] = true
+            if espButtons[r] then
+                espButtons[r].Button.BackgroundColor3 = ROLE_COLORS[r]:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+                espButtons[r].Indicator.BackgroundColor3 = ROLE_COLORS[r]
+            end
+        end
+    end
+    -- Noclip
+    if not S.noclip then
+        S.noclip = true
+        setOn(U.noclipBtn, U.noclipInd)
+        S.originalCollision = {}
+        if player.Character then
+            for _, o in ipairs(player.Character:GetDescendants()) do
+                if o:IsA("BasePart") then
+                    S.originalCollision[o] = o.CanCollide
+                    o.CanCollide = false
+                end
+            end
+        end
+    end
+    -- Auto Notify Round
+    if not S.autoNotifyRoles then S.autoNotifyRoles = true setOn(U.autoNotBtn, U.autoNotInd) end
+    -- Auto Kill All
+    if not S.autoKillAll then S.autoKillAll = true setOn(U.autoKillBtn, U.autoKillInd) end
+    sendNotification("MM2 Menu", "PVP Ready preset applied")
+end
+
+U.pvpPresetBtn = createActionButton("PvpPreset", "Apply PVP Ready")
+U.pvpPresetBtn.BackgroundColor3 = Color3.fromRGB(45, 65, 45)
+U.pvpPresetBtn.MouseButton1Click:Connect(applyPvpPreset)
+
+createSectionTitle("PRESET INFO")
+local pInfo = Instance.new("TextLabel")
+pInfo.Size = UDim2.new(1, 0, 0, 90)
+pInfo.BackgroundTransparency = 1
+pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs\n- Noclip\n- Auto Notify Round\n- Auto Kill All"
+pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
+pInfo.TextSize = 11
+pInfo.Font = Enum.Font.Gotham
+pInfo.TextXAlignment = Enum.TextXAlignment.Left
+pInfo.TextYAlignment = Enum.TextYAlignment.Top
+pInfo.LayoutOrder = getLayoutOrder()
+pInfo.Parent = currentParent
 
 -- ============================================================
 -- ESP SYSTEM
@@ -1691,8 +1814,9 @@ local function getRoles()
         noMurdererSince = nil
     end
 
-    if S.autoNotifyRoles then
-        local changed = (MurdererName and MurdererName ~= lastNotifiedMurderer)
+    -- [FIX] Only notify when murderer is present
+    if S.autoNotifyRoles and MurdererName then
+        local changed = MurdererName ~= lastNotifiedMurderer
             or (SheriffName and SheriffName ~= lastNotifiedSheriff)
             or (HeroName and HeroName ~= lastNotifiedHero)
         if changed then
@@ -1776,8 +1900,7 @@ local function updatePlayerDistance()
                 end
                 local lbl = bg:FindFirstChild("DistLabel")
                 if lbl then
-                    local dist = math.floor((myRoot.Position - tr.Position).Magnitude)
-                    lbl.Text = tostring(dist) .. " studs"
+                    lbl.Text = tostring(math.floor((myRoot.Position - tr.Position).Magnitude)) .. " studs"
                 end
             end
         end
@@ -1905,6 +2028,59 @@ local function checkAutoChat()
     end
 end
 
+-- [NEW] Killer Alarm — beeps when murderer comes near
+RunService.Heartbeat:Connect(function()
+    if not S.killerAlarmOn or not MurdererName then return end
+    local now = tick()
+    if now - S.killerAlarmCooldown < 3 then return end
+    local me = player.Character
+    if not me then return end
+    local myRoot = me:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    local m = Players:FindFirstChild(MurdererName)
+    if not m or not m.Character then return end
+    local mRoot = m.Character:FindFirstChild("HumanoidRootPart")
+    if not mRoot then return end
+    local dist = (myRoot.Position - mRoot.Position).Magnitude
+    if dist < 60 then
+        S.killerAlarmCooldown = now
+        sendNotification("⚠ MURDERER NEAR", "Murderer is " .. math.floor(dist) .. " studs away!")
+        local snd = Instance.new("Sound")
+        snd.SoundId = "rbxassetid://131961136"
+        snd.Volume = 2
+        snd.Parent = playerGui
+        snd:Play()
+        task.delay(3, function() if snd then snd:Destroy() end end)
+    end
+end)
+
+-- [NEW] Round Timer — countdown 2:30 that resets on murderer change
+RunService.Heartbeat:Connect(function()
+    if not S.roundTimerOn or not S.roundTimerLabel then return end
+    local elapsed = tick() - S.roundTimerStart
+    local remaining = math.max(0, ROUND_TIME - elapsed)
+    local m = math.floor(remaining / 60)
+    local s = math.floor(remaining % 60)
+    S.roundTimerLabel.Text = string.format("%d:%02d", m, s)
+end)
+
+-- [NEW] Spectate Killer — camera follows murderer after you die
+RunService.RenderStepped:Connect(function()
+    if not S.spectateKiller or not MurdererName then return end
+    local me = player.Character
+    if me then
+        local h = me:FindFirstChildOfClass("Humanoid")
+        if h and h.Health > 0 then return end
+    end
+    local m = Players:FindFirstChild(MurdererName)
+    if not m or not m.Character then return end
+    local mRoot = m.Character:FindFirstChild("HumanoidRootPart")
+    if not mRoot then return end
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    cam.CFrame = CFrame.new(mRoot.Position + Vector3.new(0, 10, 15), mRoot.Position)
+end)
+
 RunService.Stepped:Connect(function()
     if not S.noclip or not player.Character then return end
     for _, o in ipairs(player.Character:GetDescendants()) do
@@ -1978,6 +2154,168 @@ player.CharacterAdded:Connect(function(character)
     end
     updateHL()
 end)
+
+-- ============================================================
+-- CROSSHAIR
+-- ============================================================
+S.crosshairGui = Instance.new("ScreenGui")
+S.crosshairGui.Name = "MM2Crosshair"
+S.crosshairGui.ResetOnSpawn = false
+S.crosshairGui.IgnoreGuiInset = true
+S.crosshairGui.DisplayOrder = 200
+S.crosshairGui.Enabled = false
+S.crosshairGui.Parent = playerGui
+do
+    local ch = Instance.new("Frame")
+    ch.Name = "CH"
+    ch.Size = UDim2.fromOffset(20, 2)
+    ch.Position = UDim2.new(0.5, -10, 0.5, -1)
+    ch.BackgroundColor3 = Color3.fromRGB(50, 255, 100)
+    ch.BorderSizePixel = 0
+    ch.Parent = S.crosshairGui
+    local cv = Instance.new("Frame")
+    cv.Name = "CV"
+    cv.Size = UDim2.fromOffset(2, 20)
+    cv.Position = UDim2.new(0.5, -1, 0.5, -10)
+    cv.BackgroundColor3 = Color3.fromRGB(50, 255, 100)
+    cv.BorderSizePixel = 0
+    cv.Parent = S.crosshairGui
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.fromOffset(3, 3)
+    dot.Position = UDim2.new(0.5, -1.5, 0.5, -1.5)
+    dot.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+    dot.BorderSizePixel = 0
+    dot.Parent = S.crosshairGui
+end
+
+-- ============================================================
+-- ROUND TIMER LABEL
+-- ============================================================
+S.roundTimerLabel = Instance.new("TextLabel")
+S.roundTimerLabel.Name = "RoundTimer"
+S.roundTimerLabel.Size = UDim2.fromOffset(100, 32)
+S.roundTimerLabel.Position = UDim2.new(0.5, -50, 0, 20)
+S.roundTimerLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+S.roundTimerLabel.BackgroundTransparency = 0.3
+S.roundTimerLabel.BorderSizePixel = 0
+S.roundTimerLabel.Text = "2:30"
+S.roundTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+S.roundTimerLabel.TextSize = 20
+S.roundTimerLabel.Font = Enum.Font.GothamBold
+S.roundTimerLabel.Visible = false
+S.roundTimerLabel.ZIndex = 100
+S.roundTimerLabel.Parent = U.gui
+do local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = S.roundTimerLabel end
+
+-- ============================================================
+-- DRAG / RESIZE (main menu)
+-- ============================================================
+local dragStart, dragStartPosition, resizeStart, resizeStartSize, reopenDragStart, reopenDragStartPosition
+
+U.header.InputBegan:Connect(function(i)
+    if S.guiLocked then return end
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        S.dragging = true
+        dragStart = i.Position
+        dragStartPosition = U.frame.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if not S.dragging or S.guiLocked then return end
+    if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+        local d = i.Position - dragStart
+        U.frame.Position = UDim2.new(dragStartPosition.X.Scale, dragStartPosition.X.Offset + d.X, dragStartPosition.Y.Scale, dragStartPosition.Y.Offset + d.Y)
+    end
+end)
+
+U.resize.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        S.resizing = true
+        resizeStart = i.Position
+        resizeStartSize = U.frame.AbsoluteSize
+    end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if not S.resizing then return end
+    if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+        local d = i.Position - resizeStart
+        U.frame.Size = UDim2.fromOffset(math.max(380, resizeStartSize.X + d.X), math.max(280, resizeStartSize.Y + d.Y))
+    end
+end)
+
+-- [FIX 3] Reopen only on click, not drag
+U.reopen.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        S.reopenDragging = true
+        reopenDragStart = i.Position
+        reopenDragStartPosition = U.reopen.Position
+        S.reopenDragDist = 0
+    end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if not S.reopenDragging then return end
+    if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+        local d = i.Position - reopenDragStart
+        S.reopenDragDist = math.max(S.reopenDragDist, d.Magnitude)
+        U.reopen.Position = UDim2.new(reopenDragStartPosition.X.Scale, reopenDragStartPosition.X.Offset + d.X, reopenDragStartPosition.Y.Scale, reopenDragStartPosition.Y.Offset + d.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        S.dragging = false
+        S.resizing = false
+        if S.reopenDragging and S.reopenDragDist < 5 then
+            U.frame.Visible = true
+            U.reopen.Visible = false
+            S.menuVisible = true
+        end
+        S.reopenDragging = false
+    end
+end)
+
+local function showMenu()
+    S.menuVisible = true
+    U.frame.Visible = true
+    U.reopen.Visible = false
+end
+local function minimizeMenu()
+    S.menuVisible = false
+    U.frame.Visible = false
+    FP.panel.Visible = false
+    S.flyPanelOpen = false
+    U.reopen.Visible = true
+end
+local function closeScript()
+    pcall(resetAllToggles)
+    pcall(stopFly)
+    pcall(function()
+        for g, hl in pairs(S.gunHighlights) do if hl then hl:Destroy() end end
+    end)
+    pcall(function()
+        for p, bg in pairs(S.playerDistBillboards) do if bg then bg:Destroy() end end
+    end)
+    sendNotification("MM2 Menu", "Script closed.")
+    pcall(function() U.gui:Destroy() end)
+    pcall(function() S.crosshairGui:Destroy() end)
+end
+
+U.lock.MouseButton1Click:Connect(function()
+    S.guiLocked = not S.guiLocked
+    if S.guiLocked then
+        U.lock.Text = "🔒"
+        U.lock.BackgroundColor3 = Color3.fromRGB(70, 45, 45)
+    else
+        U.lock.Text = "🔓"
+        U.lock.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
+    end
+end)
+U.minimize.MouseButton1Click:Connect(function()
+    minimizeMenu()
+    sendNotification("MM2 Menu", "Menu minimized. Click 'MM2' or press Right Shift to reopen.")
+end)
+U.close.MouseButton1Click:Connect(closeScript)
+U.close.MouseEnter:Connect(function() U.close.BackgroundColor3 = Color3.fromRGB(180, 55, 55) end)
+U.close.MouseLeave:Connect(function() U.close.BackgroundColor3 = Color3.fromRGB(42, 44, 52) end)
 
 -- ============================================================
 -- KEYBIND ACTIONS
@@ -2073,119 +2411,21 @@ kbActions.turnOffAll = function()
 end
 
 -- ============================================================
--- DRAG / RESIZE (main menu)
+-- INPUT HANDLER (keybinds + menu toggle + modifier key detection)
 -- ============================================================
-local dragStart, dragStartPosition, resizeStart, resizeStartSize, reopenDragStart, reopenDragStartPosition
+local modifierKeys = {
+    [Enum.KeyCode.LeftAlt] = true,
+    [Enum.KeyCode.RightAlt] = true,
+    [Enum.KeyCode.LeftControl] = true,
+    [Enum.KeyCode.RightControl] = true,
+    [Enum.KeyCode.LeftShift] = true,
+}
+local pendingModifier = nil
 
-U.header.InputBegan:Connect(function(i)
-    if S.guiLocked then return end
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        S.dragging = true
-        dragStart = i.Position
-        dragStartPosition = U.frame.Position
-    end
-end)
-UserInputService.InputChanged:Connect(function(i)
-    if not S.dragging or S.guiLocked then return end
-    if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
-        local d = i.Position - dragStart
-        U.frame.Position = UDim2.new(dragStartPosition.X.Scale, dragStartPosition.X.Offset + d.X, dragStartPosition.Y.Scale, dragStartPosition.Y.Offset + d.Y)
-    end
-end)
-UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        S.dragging = false
-        S.resizing = false
-        S.reopenDragging = false
-    end
-end)
-
-U.resize.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        S.resizing = true
-        resizeStart = i.Position
-        resizeStartSize = U.frame.AbsoluteSize
-    end
-end)
-UserInputService.InputChanged:Connect(function(i)
-    if not S.resizing then return end
-    if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
-        local d = i.Position - resizeStart
-        U.frame.Size = UDim2.fromOffset(math.max(380, resizeStartSize.X + d.X), math.max(280, resizeStartSize.Y + d.Y))
-    end
-end)
-
-U.reopen.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        S.reopenDragging = true
-        reopenDragStart = i.Position
-        reopenDragStartPosition = U.reopen.Position
-    end
-end)
-UserInputService.InputChanged:Connect(function(i)
-    if not S.reopenDragging then return end
-    if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
-        local d = i.Position - reopenDragStart
-        U.reopen.Position = UDim2.new(reopenDragStartPosition.X.Scale, reopenDragStartPosition.X.Offset + d.X, reopenDragStartPosition.Y.Scale, reopenDragStartPosition.Y.Offset + d.Y)
-    end
-end)
-
-local function showMenu()
-    S.menuVisible = true
-    U.frame.Visible = true
-    U.reopen.Visible = false
-end
-local function minimizeMenu()
-    S.menuVisible = false
-    U.frame.Visible = false
-    FP.panel.Visible = false
-    S.flyPanelOpen = false
-    U.reopen.Visible = true
-end
-local function closeScript()
-    pcall(resetAllToggles)
-    pcall(stopFly)
-    pcall(function()
-        for g, hl in pairs(S.gunHighlights) do if hl then hl:Destroy() end end
-    end)
-    pcall(function()
-        for p, bg in pairs(S.playerDistBillboards) do if bg then bg:Destroy() end end
-    end)
-    sendNotification("MM2 Menu", "Script closed.")
-    pcall(function() U.gui:Destroy() end)
-end
-
-U.lock.MouseButton1Click:Connect(function()
-    S.guiLocked = not S.guiLocked
-    if S.guiLocked then
-        U.lock.Text = "🔒"
-        U.lock.BackgroundColor3 = Color3.fromRGB(70, 45, 45)
-    else
-        U.lock.Text = "🔓"
-        U.lock.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
-    end
-end)
-U.minimize.MouseButton1Click:Connect(function()
-    minimizeMenu()
-    sendNotification("MM2 Menu", "Menu minimized. Click 'MM2' or press Right Shift to reopen.")
-end)
-U.close.MouseButton1Click:Connect(closeScript)
-U.close.MouseEnter:Connect(function() U.close.BackgroundColor3 = Color3.fromRGB(180, 55, 55) end)
-U.close.MouseLeave:Connect(function() U.close.BackgroundColor3 = Color3.fromRGB(42, 44, 52) end)
-U.reopen.MouseButton1Click:Connect(showMenu)
-
--- ============================================================
--- KEYBIND INPUT HANDLER
--- ============================================================
 UserInputService.InputBegan:Connect(function(i, processed)
     if S.capturingKeybind then
-        if i.KeyCode == Enum.KeyCode.Escape then
-            endCapture()
-            return
-        end
-        if S.capturingAction then
-            S.keybinds[S.capturingAction] = i.KeyCode
-        end
+        if i.KeyCode == Enum.KeyCode.Escape then endCapture() return end
+        if S.capturingAction then S.keybinds[S.capturingAction] = i.KeyCode end
         endCapture()
         return
     end
@@ -2194,14 +2434,29 @@ UserInputService.InputBegan:Connect(function(i, processed)
         if S.menuVisible then minimizeMenu() else showMenu() end
         return
     end
+    if modifierKeys[i.KeyCode] then
+        pendingModifier = i.KeyCode
+        return
+    end
+    if pendingModifier then pendingModifier = nil end
     for action, key in pairs(S.keybinds) do
         if i.KeyCode == key then
             local fn = kbActions[action]
-            if fn then
-                pcall(fn)
-                return
+            if fn then pcall(fn) return end
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(i)
+    if i.KeyCode == pendingModifier then
+        for action, key in pairs(S.keybinds) do
+            if i.KeyCode == key then
+                local fn = kbActions[action]
+                if fn then pcall(fn) end
+                break
             end
         end
+        pendingModifier = nil
     end
 end)
 
