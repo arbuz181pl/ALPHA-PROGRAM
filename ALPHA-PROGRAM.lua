@@ -1,2231 +1,967 @@
---//==================================================
---// MM2 MENU BY ARBUZ v1BETA
---//==================================================
---// Loaded via loadstring
---//==================================================
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local StarterGui = game:GetService("StarterGui")
-
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
---==================================================
--- SETTINGS
---==================================================
-
-local ROLE_COLORS = {
-	Innocent = Color3.fromRGB(50, 210, 90),
-	Murderer = Color3.fromRGB(230, 55, 55),
-	Sheriff = Color3.fromRGB(55, 140, 255),
-	Hero = Color3.fromRGB(255, 205, 50),
-}
-
-local GUN_COLOR = Color3.fromRGB(170, 90, 230)
-
-local noclip = false
-local infinityJump = false
-local flingOnTouch = false
-local flingThirdParty = false
-local flyEnabled = false
-local autoNotifyRoles = false
-local autoKillAll = false
-local autoGunTP = false
-local autoSendMurdererChat = false
-
-local antiVoidEnabled = false
-local antiFlingEnabled = false
-
-local flySpeed = 50
-
-local speedhackEnabled = false
-local speedhackSpeed = 45
-
-local guiLocked = false
-local minimized = false
-local menuVisible = true
-
-local espEnabled = {
-	Innocent = false,
-	Murderer = false,
-	Sheriff = false,
-	Hero = false,
-}
-
-local gunESPEnabled = false
-local gunHighlights = {}
-
-local originalCollision = {}
-
---==================================================
--- AUTO CHAT MURDERER VARIABLES
---==================================================
-
-local lastChatSentMurderer = nil
-local roundActive = false
-local chatSendCooldown = 0
-
---==================================================
--- FLY VARIABLES
---==================================================
-
-local flyPanelOpen = false
-local flyBodyVelocity = nil
-local flyBodyGyro = nil
-local flyCharacter = nil
-local flyHumanoid = nil
-local flyRoot = nil
-
---==================================================
--- FLING ON TOUCH VARIABLES
---==================================================
-
-local flingTouchActive = false
-local flingTouchThread = nil
-
---==================================================
--- ANTI VOID / ANTI FLING VARIABLES
---==================================================
-
-local VOID_Y_THRESHOLD = -50
-
-local ANTI_FLING_MAX_SPEED = 200
-local ANTI_FLING_MAX_ANGULAR = 500
-local lastSafePosition = nil
-local lastSafeUpdate = 0
-
-pcall(function()
-	if not ReplicatedStorage:FindFirstChild("juisdfj0i32i0eidsuf0iok") then
-		local detection = Instance.new("Decal")
-		detection.Name = "juisdfj0i32i0eidsuf0iok"
-		detection.Parent = ReplicatedStorage
-	end
+local P=game:GetService("Players")
+local RS=game:GetService("ReplicatedStorage")
+local R=game:GetService("RunService")
+local U=game:GetService("UserInputService")
+local SG=game:GetService("StarterGui")
+local pl=P.LocalPlayer
+local pg=pl:WaitForChild("PlayerGui")
+local function N(c,p,par)
+local i=Instance.new(c)
+if p then for k,v in pairs(p) do i[k]=v end end
+if par then i.Parent=par end
+return i
+end
+local RC={Innocent=Color3.fromRGB(50,210,90),Murderer=Color3.fromRGB(230,55,55),Sheriff=Color3.fromRGB(55,140,255),Hero=Color3.fromRGB(255,205,50)}
+local GC=Color3.fromRGB(170,90,230)
+local noclip=false
+local infj=false
+local fling3p=false
+local flingInt=false
+local flyOn=false
+local notifyA=false
+local autoKill=false
+local autoGunTP=false
+local autoChat=false
+local antiVoid=false
+local antiFling=false
+local flySpeed=50
+local shOn=false
+local shSpeed=45
+local guiLocked=false
+local minimized=false
+local menuVisible=true
+local espOn={Innocent=false,Murderer=false,Sheriff=false,Hero=false}
+local gunOn=false
+local gunHLs={}
+local origCol={}
+local lastChat=nil
+local roundActive=false
+local chatCd=0
+local flyBV=nil
+local flyBG=nil
+local flyCharacter=nil
+local flingActive=false
+local flingThread=nil
+local VOID_Y=-50
+local ANTIF_SPEED=200
+local ANTIF_ANG=500
+local lastSafe=nil
+local lastSafeT=0
+local GPD=nil
+pcall(function() GPD=RS:FindFirstChild("GetPlayerData",true) end)
+local M=nil
+local S=nil
+local H=nil
+local lastM=nil
+local lastS=nil
+local lastH=nil
+local cachedSpawns={}
+local function note(t,x) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=5}) end) end
+local old=pg:FindFirstChild("MM2MenuByArbuz")
+if old then old:Destroy() end
+local gui=N("ScreenGui",{Name="MM2MenuByArbuz",ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,DisplayOrder=100},pg)
+local frame=N("Frame",{Name="Main",Size=UDim2.fromOffset(280,330),Position=UDim2.new(0.5,-140,0.5,-165),BackgroundColor3=Color3.fromRGB(22,23,28),BorderSizePixel=0,Active=true},gui)
+N("UICorner",{CornerRadius=UDim.new(0,12)},frame)
+N("UIStroke",{Color=Color3.fromRGB(55,57,65),Thickness=1},frame)
+local header=N("Frame",{Name="Header",Size=UDim2.new(1,0,0,48),BackgroundColor3=Color3.fromRGB(29,30,37),BorderSizePixel=0,Active=true},frame)
+N("UICorner",{CornerRadius=UDim.new(0,12)},header)
+N("TextLabel",{Name="Title",Size=UDim2.new(1,-120,1,0),Position=UDim2.fromOffset(10,0),BackgroundTransparency=1,Text="MM2 MENU BY ARBUZ v0.9BETA",TextColor3=Color3.fromRGB(245,245,250),TextSize=12,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center,ZIndex=2},header)
+local closeBtn=N("TextButton",{Name="Close",Size=UDim2.fromOffset(30,30),Position=UDim2.new(1,-105,0.5,-15),BackgroundColor3=Color3.fromRGB(42,44,52),Text="X",TextSize=16,TextColor3=Color3.fromRGB(255,200,200),Font=Enum.Font.GothamBold,BorderSizePixel=0,AutoButtonColor=false,Active=true,ZIndex=5},header)
+N("UICorner",{CornerRadius=UDim.new(0,7)},closeBtn)
+local lockBtn=N("TextButton",{Name="Lock",Size=UDim2.fromOffset(30,30),Position=UDim2.new(1,-70,0.5,-15),BackgroundColor3=Color3.fromRGB(42,44,52),Text="L",TextSize=14,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,BorderSizePixel=0,AutoButtonColor=false,Active=true,ZIndex=5},header)
+N("UICorner",{CornerRadius=UDim.new(0,7)},lockBtn)
+local minBtn=N("TextButton",{Name="Minimize",Size=UDim2.fromOffset(30,30),Position=UDim2.new(1,-35,0.5,-15),BackgroundColor3=Color3.fromRGB(42,44,52),Text="-",TextColor3=Color3.new(1,1,1),TextSize=17,Font=Enum.Font.GothamBold,BorderSizePixel=0,AutoButtonColor=false,Active=true,ZIndex=5},header)
+N("UICorner",{CornerRadius=UDim.new(0,7)},minBtn)
+local resizeH=N("TextButton",{Name="ResizeHandle",Size=UDim2.fromOffset(16,16),Position=UDim2.new(1,-16,1,-16),BackgroundColor3=Color3.fromRGB(55,57,65),BorderSizePixel=0,Text="",AutoButtonColor=false,Active=true,ZIndex=30},frame)
+N("UICorner",{CornerRadius=UDim.new(0,4)},resizeH)
+local reopening=false
+resizeH.InputBegan:Connect(function(input)
+if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+reopening=true
+local rStart=input.Position
+local rSize=frame.AbsoluteSize
+local c1
+c1=U.InputChanged:Connect(function(i)
+if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then
+local d=i.Position-rStart
+frame.Size=UDim2.fromOffset(math.max(240,rSize.X+d.X),math.max(200,rSize.Y+d.Y))
+end
 end)
-
---==================================================
--- PLAYER DATA (safe lookup)
---==================================================
-
-local GetPlayerData = nil
-pcall(function()
-	GetPlayerData = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+local c2
+c2=U.InputEnded:Connect(function(i)
+if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+c1:Disconnect()
+c2:Disconnect()
+end
 end)
-
--- PERSISTENT role names — only reset on round change, not every poll
-local MurdererName = nil
-local SheriffName = nil
-local HeroName = nil
-
-local lastNotifiedMurderer = nil
-local lastNotifiedSheriff = nil
-local lastNotifiedHero = nil
-
---==================================================
--- NOTIFICATION UTILITY
---==================================================
-
-local function sendNotification(title, text)
-	pcall(function()
-		StarterGui:SetCore("SendNotification", {
-			Title = title,
-			Text = text,
-			Duration = 5
-		})
-	end)
 end
-
---==================================================
--- GUI
---==================================================
-
-local existingGui = playerGui:FindFirstChild("MM2MenuByArbuz")
-if existingGui then existingGui:Destroy() end
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "MM2MenuByArbuz"
-gui.ResetOnSpawn = false
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.IgnoreGuiInset = false
-gui.Enabled = true
-gui.DisplayOrder = 100
-gui.Parent = playerGui
-
---==================================================
--- MAIN FRAME
---==================================================
-
-local frame = Instance.new("Frame")
-frame.Name = "Main"
-frame.Size = UDim2.fromOffset(280, 330)
-frame.Position = UDim2.new(0.5, -140, 0.5, -165)
-frame.BackgroundColor3 = Color3.fromRGB(22, 23, 28)
-frame.BorderSizePixel = 0
-frame.Visible = true
-frame.Active = true
-frame.Parent = gui
-
-local frameCorner = Instance.new("UICorner")
-frameCorner.CornerRadius = UDim.new(0, 12)
-frameCorner.Parent = frame
-
-local frameStroke = Instance.new("UIStroke")
-frameStroke.Color = Color3.fromRGB(55, 57, 65)
-frameStroke.Thickness = 1
-frameStroke.Parent = frame
-
---==================================================
--- HEADER
---==================================================
-
-local header = Instance.new("Frame")
-header.Name = "Header"
-header.Size = UDim2.new(1, 0, 0, 48)
-header.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
-header.BorderSizePixel = 0
-header.Active = true
-header.Parent = frame
-
-local headerCorner = Instance.new("UICorner")
-headerCorner.CornerRadius = UDim.new(0, 12)
-headerCorner.Parent = header
-
---==================================================
--- TITLE
---==================================================
-
-local title = Instance.new("TextLabel")
-title.Name = "Title"
-title.Size = UDim2.new(1, -120, 1, 0)
-title.Position = UDim2.fromOffset(10, 0)
-title.BackgroundTransparency = 1
-title.Text = "MM2 MENU BY ARBUZ v0.9BETA"
-title.TextColor3 = Color3.fromRGB(245, 245, 250)
-title.TextSize = 12
-title.Font = Enum.Font.GothamBold
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.TextYAlignment = Enum.TextYAlignment.Center
-title.ZIndex = 2
-title.Parent = header
-
---==================================================
--- CLOSE BUTTON
---==================================================
-
-local closeButton = Instance.new("TextButton")
-closeButton.Name = "Close"
-closeButton.Size = UDim2.fromOffset(30, 30)
-closeButton.Position = UDim2.new(1, -105, 0.5, -15)
-closeButton.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
-closeButton.Text = "X"
-closeButton.TextSize = 16
-closeButton.TextColor3 = Color3.fromRGB(255, 200, 200)
-closeButton.Font = Enum.Font.GothamBold
-closeButton.BorderSizePixel = 0
-closeButton.AutoButtonColor = false
-closeButton.Active = true
-closeButton.ZIndex = 5
-closeButton.Parent = header
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 7)
-closeCorner.Parent = closeButton
-
---==================================================
--- LOCK BUTTON
---==================================================
-
-local lockButton = Instance.new("TextButton")
-lockButton.Name = "Lock"
-lockButton.Size = UDim2.fromOffset(30, 30)
-lockButton.Position = UDim2.new(1, -70, 0.5, -15)
-lockButton.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
-lockButton.Text = "L"
-lockButton.TextSize = 14
-lockButton.TextColor3 = Color3.new(1, 1, 1)
-lockButton.Font = Enum.Font.GothamBold
-lockButton.BorderSizePixel = 0
-lockButton.AutoButtonColor = false
-lockButton.Active = true
-lockButton.ZIndex = 5
-lockButton.Parent = header
-
-local lockCorner = Instance.new("UICorner")
-lockCorner.CornerRadius = UDim.new(0, 7)
-lockCorner.Parent = lockButton
-
---==================================================
--- MINIMIZE BUTTON
---==================================================
-
-local minimizeButton = Instance.new("TextButton")
-minimizeButton.Name = "Minimize"
-minimizeButton.Size = UDim2.fromOffset(30, 30)
-minimizeButton.Position = UDim2.new(1, -35, 0.5, -15)
-minimizeButton.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
-minimizeButton.Text = "-"
-minimizeButton.TextColor3 = Color3.new(1, 1, 1)
-minimizeButton.TextSize = 17
-minimizeButton.Font = Enum.Font.GothamBold
-minimizeButton.BorderSizePixel = 0
-minimizeButton.AutoButtonColor = false
-minimizeButton.Active = true
-minimizeButton.ZIndex = 5
-minimizeButton.Parent = header
-
-local minimizeCorner = Instance.new("UICorner")
-minimizeCorner.CornerRadius = UDim.new(0, 7)
-minimizeCorner.Parent = minimizeButton
-
---==================================================
--- RESIZE HANDLE (bottom-right corner)
---==================================================
-
-local resizeHandle = Instance.new("TextButton")
-resizeHandle.Name = "ResizeHandle"
-resizeHandle.Size = UDim2.fromOffset(16, 16)
-resizeHandle.Position = UDim2.new(1, -16, 1, -16)
-resizeHandle.BackgroundColor3 = Color3.fromRGB(55, 57, 65)
-resizeHandle.BorderSizePixel = 0
-resizeHandle.Text = ""
-resizeHandle.AutoButtonColor = false
-resizeHandle.Active = true
-resizeHandle.ZIndex = 30
-resizeHandle.Parent = frame
-
-local resizeCorner = Instance.new("UICorner")
-resizeCorner.CornerRadius = UDim.new(0, 4)
-resizeCorner.Parent = resizeHandle
-
-local MIN_WIDTH = 240
-local MIN_HEIGHT = 200
-
-local resizing = false
-local resizeStart
-local resizeStartSize
-
-resizeHandle.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		resizing = true
-		resizeStart = input.Position
-		resizeStartSize = frame.AbsoluteSize
-	end
 end)
-
-UserInputService.InputChanged:Connect(function(input)
-	if not resizing then return end
-	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-		local delta = input.Position - resizeStart
-		local newWidth = math.max(MIN_WIDTH, resizeStartSize.X + delta.X)
-		local newHeight = math.max(MIN_HEIGHT, resizeStartSize.Y + delta.Y)
-		frame.Size = UDim2.fromOffset(newWidth, newHeight)
-	end
+local reopen=N("TextButton",{Name="Reopen",Size=UDim2.fromOffset(50,50),Position=UDim2.new(0,15,0.5,-25),BackgroundColor3=Color3.fromRGB(29,30,37),BorderSizePixel=0,Text="MM2",TextColor3=Color3.fromRGB(245,245,250),TextSize=13,Font=Enum.Font.GothamBold,AutoButtonColor=false,Active=true,Visible=false,ZIndex=50},gui)
+N("UICorner",{CornerRadius=UDim.new(1,0)},reopen)
+N("UIStroke",{Color=Color3.fromRGB(80,82,90),Thickness=2},reopen)
+local content=N("ScrollingFrame",{Name="Content",Size=UDim2.new(1,-20,1,-58),Position=UDim2.fromOffset(10,53),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=5,ScrollBarImageColor3=Color3.fromRGB(75,77,85),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollingDirection=Enum.ScrollingDirection.Y},frame)
+N("UIListLayout",{Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder},content)
+local LO=0
+local function nLO() LO=LO+1 return LO end
+local function sec(t)
+N("TextLabel",{Size=UDim2.new(1,0,0,20),BackgroundTransparency=1,Text=t,TextColor3=Color3.fromRGB(150,153,165),TextSize=11,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=nLO()},content)
+end
+local function tog(t)
+local b=N("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text=t,TextColor3=Color3.fromRGB(230,230,235),TextSize=13,Font=Enum.Font.GothamSemibold,AutoButtonColor=false,LayoutOrder=nLO()},content)
+N("UICorner",{CornerRadius=UDim.new(0,8)},b)
+local i=N("Frame",{Name="Indicator",Size=UDim2.fromOffset(5,20),Position=UDim2.fromOffset(8,8),BackgroundColor3=Color3.fromRGB(80,82,90),BorderSizePixel=0},b)
+N("UICorner",{CornerRadius=UDim.new(1,0)},i)
+return b,i
+end
+local function btn(t)
+local b=N("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text=t,TextColor3=Color3.fromRGB(230,230,235),TextSize=13,Font=Enum.Font.GothamSemibold,AutoButtonColor=false,LayoutOrder=nLO()},content)
+N("UICorner",{CornerRadius=UDim.new(0,8)},b)
+return b
+end
+local function on_(b,i) b.BackgroundColor3=Color3.fromRGB(35,70,45) i.BackgroundColor3=Color3.fromRGB(50,210,90) end
+local function off_(b,i) b.BackgroundColor3=Color3.fromRGB(34,36,43) i.BackgroundColor3=Color3.fromRGB(80,82,90) end
+local function rc()
+local n={}
+for _,x in ipairs(workspace:GetDescendants()) do
+if x:IsA("SpawnLocation") or (x:IsA("BasePart") and x.Name=="SpawnPoint") then table.insert(n,x) end
+end
+cachedSpawns=n
+end
+local function inSp(t)
+if not t or not t.Character then return true end
+local lb=workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("LobbyMap")
+if lb and t.Character:IsDescendantOf(lb) then return true end
+local tr=t.Character:FindFirstChild("HumanoidRootPart")
+if not tr then return true end
+for _,s in ipairs(cachedSpawns) do
+if s and s.Parent and (tr.Position-s.Position).Magnitude<35 then return true end
+end
+return false
+end
+rc()
+task.spawn(function() while gui.Parent do pcall(rc) task.wait(10) end end)
+sec("MOVEMENT SETTINGS")
+local ncb,nci=tog("Noclip")
+ncb.MouseButton1Click:Connect(function()
+noclip=not noclip
+if noclip then
+on_(ncb,nci)
+origCol={}
+if pl.Character then
+for _,o in ipairs(pl.Character:GetDescendants()) do
+if o:IsA("BasePart") then origCol[o]=o.CanCollide o.CanCollide=false end
+end
+end
+else
+off_(ncb,nci)
+for o,v in pairs(origCol) do if o and o.Parent then o.CanCollide=v end end
+origCol={}
+end
 end)
-
-UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		resizing = false
-	end
+R.Stepped:Connect(function()
+if not noclip or not pl.Character then return end
+for _,o in ipairs(pl.Character:GetDescendants()) do
+if o:IsA("BasePart") then o.CanCollide=false end
+end
 end)
-
---==================================================
--- REOPEN BUTTON
---==================================================
-
-local reopenButton = Instance.new("TextButton")
-reopenButton.Name = "Reopen"
-reopenButton.Size = UDim2.fromOffset(50, 50)
-reopenButton.Position = UDim2.new(0, 15, 0.5, -25)
-reopenButton.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
-reopenButton.BorderSizePixel = 0
-reopenButton.Text = "MM2"
-reopenButton.TextColor3 = Color3.fromRGB(245, 245, 250)
-reopenButton.TextSize = 13
-reopenButton.Font = Enum.Font.GothamBold
-reopenButton.AutoButtonColor = false
-reopenButton.Active = true
-reopenButton.Visible = false
-reopenButton.ZIndex = 50
-reopenButton.Parent = gui
-
-local reopenCorner = Instance.new("UICorner")
-reopenCorner.CornerRadius = UDim.new(1, 0)
-reopenCorner.Parent = reopenButton
-
-local reopenStroke = Instance.new("UIStroke")
-reopenStroke.Color = Color3.fromRGB(80, 82, 90)
-reopenStroke.Thickness = 2
-reopenStroke.Parent = reopenButton
-
---==================================================
--- CONTENT
---==================================================
-
-local content = Instance.new("ScrollingFrame")
-content.Name = "Content"
-content.Size = UDim2.new(1, -20, 1, -58)
-content.Position = UDim2.fromOffset(10, 53)
-content.BackgroundTransparency = 1
-content.BorderSizePixel = 0
-content.ScrollBarThickness = 5
-content.ScrollBarImageColor3 = Color3.fromRGB(75, 77, 85)
-content.AutomaticCanvasSize = Enum.AutomaticSize.Y
-content.ScrollingDirection = Enum.ScrollingDirection.Y
-content.Parent = frame
-
-local contentLayout = Instance.new("UIListLayout")
-contentLayout.Padding = UDim.new(0, 6)
-contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
-contentLayout.Parent = content
-
-local currentLayoutOrder = 0
-local function getLayoutOrder()
-	currentLayoutOrder = currentLayoutOrder + 1
-	return currentLayoutOrder
+local flyBtn,flyInd=tog("Fly")
+local flyPanel=N("Frame",{Name="FlyPanel",Size=UDim2.fromOffset(210,220),Position=UDim2.new(0.5,150,0.5,-110),BackgroundColor3=Color3.fromRGB(22,23,28),BorderSizePixel=0,Visible=false,ZIndex=20},gui)
+N("UICorner",{CornerRadius=UDim.new(0,12)},flyPanel)
+N("UIStroke",{Color=Color3.fromRGB(55,57,65),Thickness=1},flyPanel)
+local flyHd=N("Frame",{Name="Header",Size=UDim2.new(1,0,0,42),BackgroundColor3=Color3.fromRGB(29,30,37),BorderSizePixel=0,ZIndex=21},flyPanel)
+N("UICorner",{CornerRadius=UDim.new(0,12)},flyHd)
+N("TextLabel",{Name="Title",Size=UDim2.new(1,-20,1,0),Position=UDim2.fromOffset(10,0),BackgroundTransparency=1,Text="FLY",TextColor3=Color3.fromRGB(245,245,250),TextSize=13,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center,ZIndex=22},flyHd)
+local flyEnable=N("TextButton",{Name="Enable",Size=UDim2.new(1,-20,0,36),Position=UDim2.fromOffset(10,52),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="Enable Fly",TextColor3=Color3.fromRGB(230,230,235),TextSize=13,Font=Enum.Font.GothamSemibold,AutoButtonColor=false,ZIndex=21},flyPanel)
+N("UICorner",{CornerRadius=UDim.new(0,8)},flyEnable)
+local flyEnInd=N("Frame",{Name="Indicator",Size=UDim2.fromOffset(5,20),Position=UDim2.fromOffset(8,8),BackgroundColor3=Color3.fromRGB(80,82,90),BorderSizePixel=0,ZIndex=22},flyEnable)
+N("UICorner",{CornerRadius=UDim.new(1,0)},flyEnInd)
+local flySpdLbl=N("TextLabel",{Name="SpeedLabel",Size=UDim2.new(1,-20,0,20),Position=UDim2.fromOffset(10,98),BackgroundTransparency=1,Text="Speed: 50",TextColor3=Color3.fromRGB(150,153,165),TextSize=11,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=21},flyPanel)
+local flyMin=N("TextButton",{Name="Minus",Size=UDim2.fromOffset(36,32),Position=UDim2.fromOffset(10,123),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="-",TextColor3=Color3.fromRGB(235,235,240),TextSize=18,Font=Enum.Font.GothamBold,AutoButtonColor=false,ZIndex=21},flyPanel)
+N("UICorner",{CornerRadius=UDim.new(0,7)},flyMin)
+local flyBox=N("TextBox",{Name="Speed",Size=UDim2.new(1,-96,0,32),Position=UDim2.fromOffset(52,123),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="50",TextColor3=Color3.fromRGB(235,235,240),TextSize=12,Font=Enum.Font.GothamSemibold,ClearTextOnFocus=false,ZIndex=21},flyPanel)
+N("UICorner",{CornerRadius=UDim.new(0,7)},flyBox)
+local flyPls=N("TextButton",{Name="Plus",Size=UDim2.fromOffset(36,32),Position=UDim2.new(1,-46,0,123),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="+",TextColor3=Color3.fromRGB(235,235,240),TextSize=18,Font=Enum.Font.GothamBold,AutoButtonColor=false,ZIndex=21},flyPanel)
+N("UICorner",{CornerRadius=UDim.new(0,7)},flyPls)
+local flyUp=N("TextButton",{Name="Up",Size=UDim2.fromOffset(85,32),Position=UDim2.fromOffset(10,168),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="UP",TextColor3=Color3.fromRGB(230,230,235),TextSize=12,Font=Enum.Font.GothamBold,AutoButtonColor=false,ZIndex=21},flyPanel)
+N("UICorner",{CornerRadius=UDim.new(0,7)},flyUp)
+local flyDown=N("TextButton",{Name="Down",Size=UDim2.fromOffset(85,32),Position=UDim2.new(1,-95,0,168),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="DOWN",TextColor3=Color3.fromRGB(230,230,235),TextSize=12,Font=Enum.Font.GothamBold,AutoButtonColor=false,ZIndex=21},flyPanel)
+N("UICorner",{CornerRadius=UDim.new(0,7)},flyDown)
+local function setFlySpd(v)
+v=tonumber(v) or flySpeed
+v=math.clamp(math.floor(v),1,500)
+flySpeed=v
+flySpdLbl.Text="Speed: "..tostring(v)
+flyBox.Text=tostring(v)
 end
-
---==================================================
--- HELPERS
---==================================================
-
-local function createSectionTitle(text)
-	local label = Instance.new("TextLabel")
-	label.Name = text .. "Header"
-	label.Size = UDim2.new(1, 0, 0, 20)
-	label.BackgroundTransparency = 1
-	label.Text = text
-	label.TextColor3 = Color3.fromRGB(150, 153, 165)
-	label.TextSize = 11
-	label.Font = Enum.Font.GothamBold
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.LayoutOrder = getLayoutOrder()
-	label.Parent = content
-	return label
-end
-
-local function createToggle(name, text)
-	local button = Instance.new("TextButton")
-	button.Name = name
-	button.Size = UDim2.new(1, 0, 0, 36)
-	button.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-	button.BorderSizePixel = 0
-	button.Text = text
-	button.TextColor3 = Color3.fromRGB(230, 230, 235)
-	button.TextSize = 13
-	button.Font = Enum.Font.GothamSemibold
-	button.AutoButtonColor = false
-	button.LayoutOrder = getLayoutOrder()
-	button.Parent = content
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = button
-
-	local indicator = Instance.new("Frame")
-	indicator.Name = "Indicator"
-	indicator.Size = UDim2.fromOffset(5, 20)
-	indicator.Position = UDim2.fromOffset(8, 8)
-	indicator.BackgroundColor3 = Color3.fromRGB(80, 82, 90)
-	indicator.BorderSizePixel = 0
-	indicator.Parent = button
-
-	local indicatorCorner = Instance.new("UICorner")
-	indicatorCorner.CornerRadius = UDim.new(1, 0)
-	indicatorCorner.Parent = indicator
-
-	return button, indicator
-end
-
-local function createActionButton(name, text)
-	local button = Instance.new("TextButton")
-	button.Name = name
-	button.Size = UDim2.new(1, 0, 0, 36)
-	button.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-	button.BorderSizePixel = 0
-	button.Text = text
-	button.TextColor3 = Color3.fromRGB(230, 230, 235)
-	button.TextSize = 13
-	button.Font = Enum.Font.GothamSemibold
-	button.AutoButtonColor = false
-	button.LayoutOrder = getLayoutOrder()
-	button.Parent = content
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = button
-
-	return button
-end
-
-local function setToggleOn(button, indicator)
-	button.BackgroundColor3 = Color3.fromRGB(35, 70, 45)
-	indicator.BackgroundColor3 = Color3.fromRGB(50, 210, 90)
-end
-
-local function setToggleOff(button, indicator)
-	button.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-	indicator.BackgroundColor3 = Color3.fromRGB(80, 82, 90)
-end
-
---==================================================
--- SPAWN & LOBBY PROTECTION (cached)
---==================================================
-
-local cachedSpawns = {}
-
-local function refreshSpawnCache()
-	local newCache = {}
-	for _, obj in ipairs(workspace:GetDescendants()) do
-		if obj:IsA("SpawnLocation") then
-			table.insert(newCache, obj)
-		elseif obj:IsA("BasePart") and obj.Name == "SpawnPoint" then
-			table.insert(newCache, obj)
-		end
-	end
-	cachedSpawns = newCache
-end
-
-local function isPlayerInSpawn(target)
-	if not target or not target.Character then return true end
-
-	local lobby = workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("LobbyMap")
-	if lobby and target.Character:IsDescendantOf(lobby) then
-		return true
-	end
-
-	local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
-	if not targetRoot then return true end
-
-	for _, spawnObject in ipairs(cachedSpawns) do
-		if spawnObject and spawnObject.Parent then
-			if (targetRoot.Position - spawnObject.Position).Magnitude < 35 then
-				return true
-			end
-		end
-	end
-
-	return false
-end
-
-refreshSpawnCache()
-task.spawn(function()
-	while gui.Parent do
-		pcall(refreshSpawnCache)
-		task.wait(10)
-	end
-end)
-
---==================================================
--- MOVEMENT SETTINGS
---==================================================
-
-createSectionTitle("MOVEMENT SETTINGS")
-
--- NOCLIP
-local noclipButton, noclipIndicator = createToggle("Noclip", "Noclip")
-
-noclipButton.MouseButton1Click:Connect(function()
-	noclip = not noclip
-	if noclip then
-		setToggleOn(noclipButton, noclipIndicator)
-		originalCollision = {}
-
-		if player.Character then
-			for _, object in ipairs(player.Character:GetDescendants()) do
-				if object:IsA("BasePart") then
-					originalCollision[object] = object.CanCollide
-					object.CanCollide = false
-				end
-			end
-		end
-	else
-		setToggleOff(noclipButton, noclipIndicator)
-
-		for object, oldValue in pairs(originalCollision) do
-			if object and object.Parent then
-				object.CanCollide = oldValue
-			end
-		end
-		originalCollision = {}
-	end
-end)
-
--- FLY BUTTON
-local flyButton, flyIndicator = createToggle("Fly", "Fly")
-
--- FLY PANEL
-local flyPanel = Instance.new("Frame")
-flyPanel.Name = "FlyPanel"
-flyPanel.Size = UDim2.fromOffset(210, 220)
-flyPanel.Position = UDim2.new(0.5, 150, 0.5, -110)
-flyPanel.BackgroundColor3 = Color3.fromRGB(22, 23, 28)
-flyPanel.BorderSizePixel = 0
-flyPanel.Visible = false
-flyPanel.ZIndex = 20
-flyPanel.Parent = gui
-
-local flyPanelCorner = Instance.new("UICorner")
-flyPanelCorner.CornerRadius = UDim.new(0, 12)
-flyPanelCorner.Parent = flyPanel
-
-local flyPanelStroke = Instance.new("UIStroke")
-flyPanelStroke.Color = Color3.fromRGB(55, 57, 65)
-flyPanelStroke.Thickness = 1
-flyPanelStroke.Parent = flyPanel
-
-local flyHeader = Instance.new("Frame")
-flyHeader.Name = "Header"
-flyHeader.Size = UDim2.new(1, 0, 0, 42)
-flyHeader.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
-flyHeader.BorderSizePixel = 0
-flyHeader.ZIndex = 21
-flyHeader.Parent = flyPanel
-
-local flyHeaderCorner = Instance.new("UICorner")
-flyHeaderCorner.CornerRadius = UDim.new(0, 12)
-flyHeaderCorner.Parent = flyHeader
-
-local flyTitle = Instance.new("TextLabel")
-flyTitle.Name = "Title"
-flyTitle.Size = UDim2.new(1, -20, 1, 0)
-flyTitle.Position = UDim2.fromOffset(10, 0)
-flyTitle.BackgroundTransparency = 1
-flyTitle.Text = "FLY"
-flyTitle.TextColor3 = Color3.fromRGB(245, 245, 250)
-flyTitle.TextSize = 13
-flyTitle.Font = Enum.Font.GothamBold
-flyTitle.TextXAlignment = Enum.TextXAlignment.Left
-flyTitle.TextYAlignment = Enum.TextYAlignment.Center
-flyTitle.ZIndex = 22
-flyTitle.Parent = flyHeader
-
-local flyEnableButton = Instance.new("TextButton")
-flyEnableButton.Name = "Enable"
-flyEnableButton.Size = UDim2.new(1, -20, 0, 36)
-flyEnableButton.Position = UDim2.fromOffset(10, 52)
-flyEnableButton.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-flyEnableButton.BorderSizePixel = 0
-flyEnableButton.Text = "Enable Fly"
-flyEnableButton.TextColor3 = Color3.fromRGB(230, 230, 235)
-flyEnableButton.TextSize = 13
-flyEnableButton.Font = Enum.Font.GothamSemibold
-flyEnableButton.AutoButtonColor = false
-flyEnableButton.ZIndex = 21
-flyEnableButton.Parent = flyPanel
-
-local flyEnableCorner = Instance.new("UICorner")
-flyEnableCorner.CornerRadius = UDim.new(0, 8)
-flyEnableCorner.Parent = flyEnableButton
-
-local flyEnableIndicator = Instance.new("Frame")
-flyEnableIndicator.Name = "Indicator"
-flyEnableIndicator.Size = UDim2.fromOffset(5, 20)
-flyEnableIndicator.Position = UDim2.fromOffset(8, 8)
-flyEnableIndicator.BackgroundColor3 = Color3.fromRGB(80, 82, 90)
-flyEnableIndicator.BorderSizePixel = 0
-flyEnableIndicator.ZIndex = 22
-flyEnableIndicator.Parent = flyEnableButton
-
-local flyEnableIndicatorCorner = Instance.new("UICorner")
-flyEnableIndicatorCorner.CornerRadius = UDim.new(1, 0)
-flyEnableIndicatorCorner.Parent = flyEnableIndicator
-
-local flySpeedLabel = Instance.new("TextLabel")
-flySpeedLabel.Name = "SpeedLabel"
-flySpeedLabel.Size = UDim2.new(1, -20, 0, 20)
-flySpeedLabel.Position = UDim2.fromOffset(10, 98)
-flySpeedLabel.BackgroundTransparency = 1
-flySpeedLabel.Text = "Speed: 50"
-flySpeedLabel.TextColor3 = Color3.fromRGB(150, 153, 165)
-flySpeedLabel.TextSize = 11
-flySpeedLabel.Font = Enum.Font.GothamBold
-flySpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-flySpeedLabel.ZIndex = 21
-flySpeedLabel.Parent = flyPanel
-
-local flyMinus = Instance.new("TextButton")
-flyMinus.Name = "Minus"
-flyMinus.Size = UDim2.fromOffset(36, 32)
-flyMinus.Position = UDim2.fromOffset(10, 123)
-flyMinus.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-flyMinus.BorderSizePixel = 0
-flyMinus.Text = "-"
-flyMinus.TextColor3 = Color3.fromRGB(235, 235, 240)
-flyMinus.TextSize = 18
-flyMinus.Font = Enum.Font.GothamBold
-flyMinus.AutoButtonColor = false
-flyMinus.ZIndex = 21
-flyMinus.Parent = flyPanel
-
-local flyMinusCorner = Instance.new("UICorner")
-flyMinusCorner.CornerRadius = UDim.new(0, 7)
-flyMinusCorner.Parent = flyMinus
-
-local flySpeedBox = Instance.new("TextBox")
-flySpeedBox.Name = "Speed"
-flySpeedBox.Size = UDim2.new(1, -96, 0, 32)
-flySpeedBox.Position = UDim2.fromOffset(52, 123)
-flySpeedBox.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-flySpeedBox.BorderSizePixel = 0
-flySpeedBox.Text = "50"
-flySpeedBox.TextColor3 = Color3.fromRGB(235, 235, 240)
-flySpeedBox.TextSize = 12
-flySpeedBox.Font = Enum.Font.GothamSemibold
-flySpeedBox.ClearTextOnFocus = false
-flySpeedBox.ZIndex = 21
-flySpeedBox.Parent = flyPanel
-
-local flySpeedBoxCorner = Instance.new("UICorner")
-flySpeedBoxCorner.CornerRadius = UDim.new(0, 7)
-flySpeedBoxCorner.Parent = flySpeedBox
-
-local flyPlus = Instance.new("TextButton")
-flyPlus.Name = "Plus"
-flyPlus.Size = UDim2.fromOffset(36, 32)
-flyPlus.Position = UDim2.new(1, -46, 0, 123)
-flyPlus.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-flyPlus.BorderSizePixel = 0
-flyPlus.Text = "+"
-flyPlus.TextColor3 = Color3.fromRGB(235, 235, 240)
-flyPlus.TextSize = 18
-flyPlus.Font = Enum.Font.GothamBold
-flyPlus.AutoButtonColor = false
-flyPlus.ZIndex = 21
-flyPlus.Parent = flyPanel
-
-local flyPlusCorner = Instance.new("UICorner")
-flyPlusCorner.CornerRadius = UDim.new(0, 7)
-flyPlusCorner.Parent = flyPlus
-
-local flyUp = Instance.new("TextButton")
-flyUp.Name = "Up"
-flyUp.Size = UDim2.fromOffset(85, 32)
-flyUp.Position = UDim2.fromOffset(10, 168)
-flyUp.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-flyUp.BorderSizePixel = 0
-flyUp.Text = "UP"
-flyUp.TextColor3 = Color3.fromRGB(230, 230, 235)
-flyUp.TextSize = 12
-flyUp.Font = Enum.Font.GothamBold
-flyUp.AutoButtonColor = false
-flyUp.ZIndex = 21
-flyUp.Parent = flyPanel
-
-local flyUpCorner = Instance.new("UICorner")
-flyUpCorner.CornerRadius = UDim.new(0, 7)
-flyUpCorner.Parent = flyUp
-
-local flyDown = Instance.new("TextButton")
-flyDown.Name = "Down"
-flyDown.Size = UDim2.fromOffset(85, 32)
-flyDown.Position = UDim2.new(1, -95, 0, 168)
-flyDown.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-flyDown.BorderSizePixel = 0
-flyDown.Text = "DOWN"
-flyDown.TextColor3 = Color3.fromRGB(230, 230, 235)
-flyDown.TextSize = 12
-flyDown.Font = Enum.Font.GothamBold
-flyDown.AutoButtonColor = false
-flyDown.ZIndex = 21
-flyDown.Parent = flyPanel
-
-local flyDownCorner = Instance.new("UICorner")
-flyDownCorner.CornerRadius = UDim.new(0, 7)
-flyDownCorner.Parent = flyDown
-
-local function updateFlySpeed(value)
-	value = tonumber(value)
-	if not value then value = flySpeed end
-	value = math.clamp(math.floor(value), 1, 500)
-	flySpeed = value
-	flySpeedLabel.Text = "Speed: " .. tostring(flySpeed)
-	flySpeedBox.Text = tostring(flySpeed)
-end
-
-flyMinus.MouseButton1Click:Connect(function() updateFlySpeed(flySpeed - 1) end)
-flyPlus.MouseButton1Click:Connect(function() updateFlySpeed(flySpeed + 1) end)
-flySpeedBox.FocusLost:Connect(function() updateFlySpeed(flySpeedBox.Text) end)
-
---==================================================
--- FLY (compact — camera-look based)
---==================================================
-
+flyMin.MouseButton1Click:Connect(function() setFlySpd(flySpeed-1) end)
+flyPls.MouseButton1Click:Connect(function() setFlySpd(flySpeed+1) end)
+flyBox.FocusLost:Connect(function() setFlySpd(flyBox.Text) end)
 local function stopFly()
-	flyEnabled = false
-	if flyBodyVelocity then flyBodyVelocity:Destroy() flyBodyVelocity = nil end
-	if flyBodyGyro then flyBodyGyro:Destroy() flyBodyGyro = nil end
-	flyCharacter = nil
-	flyHumanoid = nil
-	flyRoot = nil
-
-	local character = player.Character
-	if character then
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if humanoid then
-			humanoid.PlatformStand = false
-		end
-		local animate = character:FindFirstChild("Animate")
-		if animate then animate.Disabled = false end
-	end
-
-	flyEnableButton.Text = "Enable Fly"
-	setToggleOff(flyEnableButton, flyEnableIndicator)
-	setToggleOff(flyButton, flyIndicator)
+flyOn=false
+if flyBV then flyBV:Destroy() flyBV=nil end
+if flyBG then flyBG:Destroy() flyBG=nil end
+flyCharacter=nil
+local c=pl.Character
+if c then
+local h=c:FindFirstChildOfClass("Humanoid")
+if h then h.PlatformStand=false end
+local a=c:FindFirstChild("Animate")
+if a then a.Disabled=false end
 end
-
+flyEnable.Text="Enable Fly"
+off_(flyEnable,flyEnInd)
+off_(flyBtn,flyInd)
+end
 local function startFly()
-	local character = player.Character
-	if not character then return end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	local root = character:FindFirstChild("HumanoidRootPart")
-	if not humanoid or not root then return end
-
-	flyEnabled = true
-	flyCharacter = character
-	flyHumanoid = humanoid
-	flyRoot = root
-
-	humanoid.PlatformStand = true
-	local animate = character:FindFirstChild("Animate")
-	if animate then animate.Disabled = true end
-
-	flyBodyGyro = Instance.new("BodyGyro")
-	flyBodyGyro.P = 90000
-	flyBodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-	flyBodyGyro.CFrame = root.CFrame
-	flyBodyGyro.Parent = root
-
-	flyBodyVelocity = Instance.new("BodyVelocity")
-	flyBodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-	flyBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-	flyBodyVelocity.Parent = root
-
-	flyEnableButton.Text = "Disable Fly"
-	setToggleOn(flyEnableButton, flyEnableIndicator)
-	setToggleOn(flyButton, flyIndicator)
+local c=pl.Character
+if not c then return end
+local h=c:FindFirstChildOfClass("Humanoid")
+local r=c:FindFirstChild("HumanoidRootPart")
+if not h or not r then return end
+flyOn=true
+flyCharacter=c
+h.PlatformStand=true
+local a=c:FindFirstChild("Animate")
+if a then a.Disabled=true end
+flyBG=N("BodyGyro",{P=90000,MaxTorque=Vector3.new(9e9,9e9,9e9),CFrame=r.CFrame},r)
+flyBV=N("BodyVelocity",{MaxForce=Vector3.new(9e9,9e9,9e9),Velocity=Vector3.zero},r)
+flyEnable.Text="Disable Fly"
+on_(flyEnable,flyEnInd)
+on_(flyBtn,flyInd)
 end
-
-flyEnableButton.MouseButton1Click:Connect(function()
-	if flyEnabled then stopFly() else startFly() end
+flyEnable.MouseButton1Click:Connect(function() if flyOn then stopFly() else startFly() end end)
+flyBtn.MouseButton1Click:Connect(function()
+flyPanel.Visible=not flyPanel.Visible
+if flyPanel.Visible then flyBtn.BackgroundColor3=Color3.fromRGB(45,47,56)
+elseif flyOn then on_(flyBtn,flyInd)
+else off_(flyBtn,flyInd) end
 end)
-
-flyButton.MouseButton1Click:Connect(function()
-	flyPanelOpen = not flyPanelOpen
-	flyPanel.Visible = flyPanelOpen
-	if flyPanelOpen then
-		flyButton.BackgroundColor3 = Color3.fromRGB(45, 47, 56)
-	else
-		if flyEnabled then
-			setToggleOn(flyButton, flyIndicator)
-		else
-			setToggleOff(flyButton, flyIndicator)
-		end
-	end
+R.RenderStepped:Connect(function()
+if not flyOn or not flyBV or not flyBG then return end
+local c=pl.Character
+if not c then stopFly() return end
+local r=c:FindFirstChild("HumanoidRootPart")
+local cam=workspace.CurrentCamera
+if not r or not cam then return end
+local d=Vector3.zero
+if U:IsKeyDown(Enum.KeyCode.W) then d=d+cam.CFrame.LookVector end
+if U:IsKeyDown(Enum.KeyCode.S) then d=d-cam.CFrame.LookVector end
+if U:IsKeyDown(Enum.KeyCode.A) then d=d-cam.CFrame.RightVector end
+if U:IsKeyDown(Enum.KeyCode.D) then d=d+cam.CFrame.RightVector end
+if U:IsKeyDown(Enum.KeyCode.Space) then d=d+Vector3.new(0,1,0) end
+if U:IsKeyDown(Enum.KeyCode.LeftControl) then d=d-Vector3.new(0,1,0) end
+if d.Magnitude>0 then flyBV.Velocity=d.Unit*flySpeed else flyBV.Velocity=Vector3.zero end
+flyBG.CFrame=cam.CFrame
 end)
-
-RunService.RenderStepped:Connect(function()
-	if not flyEnabled or not flyBodyVelocity or not flyBodyGyro then return end
-	local character = player.Character
-	if not character then stopFly() return end
-	local root = character:FindFirstChild("HumanoidRootPart")
-	local camera = workspace.CurrentCamera
-	if not root or not camera then return end
-
-	local direction = Vector3.zero
-	if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction = direction + camera.CFrame.LookVector end
-	if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction = direction - camera.CFrame.LookVector end
-	if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction = direction - camera.CFrame.RightVector end
-	if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction = direction + camera.CFrame.RightVector end
-	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then direction = direction + Vector3.new(0, 1, 0) end
-	if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction = direction - Vector3.new(0, 1, 0) end
-
-	if direction.Magnitude > 0 then
-		flyBodyVelocity.Velocity = direction.Unit * flySpeed
-	else
-		flyBodyVelocity.Velocity = Vector3.zero
-	end
-	flyBodyGyro.CFrame = camera.CFrame
+local ijb,iji=tog("Infinity Jump")
+ijb.MouseButton1Click:Connect(function()
+infj=not infj
+if infj then on_(ijb,iji) else off_(ijb,iji) end
 end)
-
--- INFINITY JUMP
-local infinityJumpButton, infinityJumpIndicator = createToggle("InfinityJump", "Infinity Jump")
-
-infinityJumpButton.MouseButton1Click:Connect(function()
-	infinityJump = not infinityJump
-	if infinityJump then
-		setToggleOn(infinityJumpButton, infinityJumpIndicator)
-	else
-		setToggleOff(infinityJumpButton, infinityJumpIndicator)
-	end
+U.JumpRequest:Connect(function()
+if not infj then return end
+local c=pl.Character
+if not c then return end
+local h=c:FindFirstChildOfClass("Humanoid")
+if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
 end)
-
-UserInputService.JumpRequest:Connect(function()
-	if not infinityJump then return end
-	local character = player.Character
-	if not character then return end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end
-end)
-
---==================================================
--- FLING 3RD PARTY
---==================================================
-
-local flingThirdPartyButton, flingThirdPartyIndicator = createToggle("FlingOnTouch", "Fling 3rd party")
-
-flingThirdPartyButton.MouseButton1Click:Connect(function()
-	flingThirdParty = not flingThirdParty
-	if flingThirdParty then
-		flingThirdPartyButton.BackgroundColor3 = Color3.fromRGB(70, 45, 35)
-		flingThirdPartyIndicator.BackgroundColor3 = Color3.fromRGB(230, 100, 55)
-		local success = pcall(function()
-			loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Ultimate-Fling-GUI-41909"))()
-		end)
-		if not success then
-			sendNotification("MM2 Menu", "Failed to load 3rd party fling script.")
-		end
-	else
-		setToggleOff(flingThirdPartyButton, flingThirdPartyIndicator)
-	end
-end)
-
---==================================================
--- FLING ON TOUCH
---==================================================
-
-local function flingOnTouchLoop()
-	local lp = player
-	local c, hrp, vel, movel = nil, nil, nil, 0.1
-
-	while flingTouchActive do
-		RunService.Heartbeat:Wait()
-		c = lp.Character
-		hrp = c and c:FindFirstChild("HumanoidRootPart")
-
-		if hrp then
-			vel = hrp.Velocity
-			hrp.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
-			RunService.RenderStepped:Wait()
-			hrp.Velocity = vel
-			RunService.Stepped:Wait()
-			hrp.Velocity = vel + Vector3.new(0, movel, 0)
-			movel = -movel
-		end
-	end
+local shb,shi=tog("Speedhack")
+local shRow=N("Frame",{Size=UDim2.new(1,0,0,32),BackgroundTransparency=1,LayoutOrder=nLO()},content)
+local shMin=N("TextButton",{Size=UDim2.fromOffset(36,32),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="-",TextColor3=Color3.fromRGB(235,235,240),TextSize=18,Font=Enum.Font.GothamBold,AutoButtonColor=false},shRow)
+N("UICorner",{CornerRadius=UDim.new(0,7)},shMin)
+local shBox=N("TextBox",{Size=UDim2.fromOffset(50,32),Position=UDim2.fromOffset(42,0),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="45",TextColor3=Color3.fromRGB(235,235,240),TextSize=12,Font=Enum.Font.GothamSemibold,ClearTextOnFocus=false},shRow)
+N("UICorner",{CornerRadius=UDim.new(0,7)},shBox)
+local shPls=N("TextButton",{Size=UDim2.fromOffset(36,32),Position=UDim2.fromOffset(100,0),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="+",TextColor3=Color3.fromRGB(235,235,240),TextSize=18,Font=Enum.Font.GothamBold,AutoButtonColor=false},shRow)
+N("UICorner",{CornerRadius=UDim.new(0,7)},shPls)
+N("TextLabel",{Size=UDim2.new(1,-145,0,32),Position=UDim2.fromOffset(145,0),BackgroundTransparency=1,Text="WalkSpeed",TextColor3=Color3.fromRGB(150,153,165),TextSize=11,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left},shRow)
+local function setSh(v)
+v=tonumber(v) or shSpeed
+v=math.clamp(math.floor(v),1,500)
+shSpeed=v
+shBox.Text=tostring(v)
 end
-
-local flingOnTouchButton, flingOnTouchIndicator = createToggle("FlingOnTouchIntegrated", "Fling On Touch")
-
-flingOnTouchButton.MouseButton1Click:Connect(function()
-	flingOnTouch = not flingOnTouch
-	if flingOnTouch then
-		flingOnTouchButton.BackgroundColor3 = Color3.fromRGB(70, 45, 35)
-		flingOnTouchIndicator.BackgroundColor3 = Color3.fromRGB(230, 100, 55)
-		flingTouchActive = true
-		flingTouchThread = coroutine.create(flingOnTouchLoop)
-		coroutine.resume(flingTouchThread)
-	else
-		setToggleOff(flingOnTouchButton, flingOnTouchIndicator)
-		flingTouchActive = false
-	end
-end)
-
---==================================================
--- SPEEDHACK
---==================================================
-
-local speedhackButton, speedhackIndicator = createToggle("Speedhack", "Speedhack")
-
-local speedhackRow = Instance.new("Frame")
-speedhackRow.Name = "SpeedhackRow"
-speedhackRow.Size = UDim2.new(1, 0, 0, 32)
-speedhackRow.BackgroundTransparency = 1
-speedhackRow.LayoutOrder = getLayoutOrder()
-speedhackRow.Parent = content
-
-local speedhackMinus = Instance.new("TextButton")
-speedhackMinus.Size = UDim2.fromOffset(36, 32)
-speedhackMinus.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-speedhackMinus.BorderSizePixel = 0
-speedhackMinus.Text = "-"
-speedhackMinus.TextColor3 = Color3.fromRGB(235, 235, 240)
-speedhackMinus.TextSize = 18
-speedhackMinus.Font = Enum.Font.GothamBold
-speedhackMinus.AutoButtonColor = false
-speedhackMinus.Parent = speedhackRow
-
-local speedhackBox = Instance.new("TextBox")
-speedhackBox.Size = UDim2.fromOffset(50, 32)
-speedhackBox.Position = UDim2.fromOffset(42, 0)
-speedhackBox.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-speedhackBox.BorderSizePixel = 0
-speedhackBox.Text = "45"
-speedhackBox.TextColor3 = Color3.fromRGB(235, 235, 240)
-speedhackBox.TextSize = 12
-speedhackBox.Font = Enum.Font.GothamSemibold
-speedhackBox.ClearTextOnFocus = false
-speedhackBox.Parent = speedhackRow
-
-local speedhackPlus = Instance.new("TextButton")
-speedhackPlus.Size = UDim2.fromOffset(36, 32)
-speedhackPlus.Position = UDim2.fromOffset(100, 0)
-speedhackPlus.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-speedhackPlus.BorderSizePixel = 0
-speedhackPlus.Text = "+"
-speedhackPlus.TextColor3 = Color3.fromRGB(235, 235, 240)
-speedhackPlus.TextSize = 18
-speedhackPlus.Font = Enum.Font.GothamBold
-speedhackPlus.AutoButtonColor = false
-speedhackPlus.Parent = speedhackRow
-
-local speedhackValueLabel = Instance.new("TextLabel")
-speedhackValueLabel.Size = UDim2.new(1, -145, 0, 32)
-speedhackValueLabel.Position = UDim2.fromOffset(145, 0)
-speedhackValueLabel.BackgroundTransparency = 1
-speedhackValueLabel.Text = "WalkSpeed"
-speedhackValueLabel.TextColor3 = Color3.fromRGB(150, 153, 165)
-speedhackValueLabel.TextSize = 11
-speedhackValueLabel.Font = Enum.Font.GothamBold
-speedhackValueLabel.TextXAlignment = Enum.TextXAlignment.Left
-speedhackValueLabel.Parent = speedhackRow
-
-local function updateSpeedhack(value)
-	value = tonumber(value)
-	if not value then value = speedhackSpeed end
-	value = math.clamp(math.floor(value), 1, 500)
-	speedhackSpeed = value
-	speedhackBox.Text = tostring(speedhackSpeed)
+shMin.MouseButton1Click:Connect(function() setSh(shSpeed-5) end)
+shPls.MouseButton1Click:Connect(function() setSh(shSpeed+5) end)
+shBox.FocusLost:Connect(function() setSh(shBox.Text) end)
+shb.MouseButton1Click:Connect(function()
+shOn=not shOn
+if shOn then
+on_(shb,shi)
+local c=pl.Character
+if c then local h=c:FindFirstChildOfClass("Humanoid") if h then h.WalkSpeed=shSpeed end end
+else
+off_(shb,shi)
+local c=pl.Character
+if c then local h=c:FindFirstChildOfClass("Humanoid") if h then h.WalkSpeed=16 end end
 end
-
-speedhackMinus.MouseButton1Click:Connect(function() updateSpeedhack(speedhackSpeed - 5) end)
-speedhackPlus.MouseButton1Click:Connect(function() updateSpeedhack(speedhackSpeed + 5) end)
-speedhackBox.FocusLost:Connect(function() updateSpeedhack(speedhackBox.Text) end)
-
-speedhackButton.MouseButton1Click:Connect(function()
-	speedhackEnabled = not speedhackEnabled
-	if speedhackEnabled then
-		setToggleOn(speedhackButton, speedhackIndicator)
-		local character = player.Character
-		if character then
-			local humanoid = character:FindFirstChildOfClass("Humanoid")
-			if humanoid then humanoid.WalkSpeed = speedhackSpeed end
-		end
-	else
-		setToggleOff(speedhackButton, speedhackIndicator)
-		local character = player.Character
-		if character then
-			local humanoid = character:FindFirstChildOfClass("Humanoid")
-			if humanoid then humanoid.WalkSpeed = 16 end
-		end
-	end
 end)
-
-RunService.RenderStepped:Connect(function()
-	if not speedhackEnabled then return end
-	local character = player.Character
-	if not character then return end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if humanoid then humanoid.WalkSpeed = speedhackSpeed end
+R.RenderStepped:Connect(function()
+if not shOn then return end
+local c=pl.Character
+if not c then return end
+local h=c:FindFirstChildOfClass("Humanoid")
+if h then h.WalkSpeed=shSpeed end
 end)
-
---==================================================
--- ROLE ESP SETTINGS
---==================================================
-
-createSectionTitle("ROLE ESP SETTINGS")
-
-local espButtons = {}
-
-local function createESPButton(role)
-	local button, indicator = createToggle(role .. "ESP", role .. " ESP")
-	espButtons[role] = { Button = button, Indicator = indicator }
-
-	button.MouseButton1Click:Connect(function()
-		espEnabled[role] = not espEnabled[role]
-		if espEnabled[role] then
-			button.BackgroundColor3 = ROLE_COLORS[role]:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-			indicator.BackgroundColor3 = ROLE_COLORS[role]
-		else
-			setToggleOff(button, indicator)
-		end
-	end)
+sec("FLING SETTINGS")
+local f3b,f3i=tog("Fling 3rd party")
+f3b.MouseButton1Click:Connect(function()
+fling3p=not fling3p
+if fling3p then
+f3b.BackgroundColor3=Color3.fromRGB(70,45,35)
+f3i.BackgroundColor3=Color3.fromRGB(230,100,55)
+local ok=pcall(function() loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Ultimate-Fling-GUI-41909"))() end)
+if not ok then note("MM2 Menu","Failed to load 3rd party fling script.") end
+else off_(f3b,f3i) end
+end)
+local function flingLoop()
+local lp=pl
+local c,hrp,vel,movel=nil,nil,nil,0.1
+while flingActive do
+R.Heartbeat:Wait()
+c=lp.Character
+hrp=c and c:FindFirstChild("HumanoidRootPart")
+if hrp then
+vel=hrp.Velocity
+hrp.Velocity=vel*10000+Vector3.new(0,10000,0)
+R.RenderStepped:Wait()
+hrp.Velocity=vel
+R.Stepped:Wait()
+hrp.Velocity=vel+Vector3.new(0,movel,0)
+movel=-movel
 end
-
-createESPButton("Innocent")
-createESPButton("Murderer")
-createESPButton("Sheriff")
-createESPButton("Hero")
-
---==================================================
--- ITEM ESP SETTINGS (Gun)
---==================================================
-
-createSectionTitle("ITEM ESP SETTINGS")
-
-local gunESPButton, gunESPIndicator = createToggle("GunESP", "Gun ESP")
-
-gunESPButton.MouseButton1Click:Connect(function()
-	gunESPEnabled = not gunESPEnabled
-	if gunESPEnabled then
-		gunESPButton.BackgroundColor3 = GUN_COLOR:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-		gunESPIndicator.BackgroundColor3 = GUN_COLOR
-	else
-		setToggleOff(gunESPButton, gunESPIndicator)
-		for gun, hl in pairs(gunHighlights) do
-			if hl then pcall(function() hl:Destroy() end) end
-		end
-		gunHighlights = {}
-	end
-end)
-
---==================================================
--- NOTIFIER SETTINGS
---==================================================
-
-createSectionTitle("NOTIFIER SETTINGS")
-
-local function getFormattedRoleText(roleName, userName)
-	if not userName then return roleName .. ": None" end
-	local targetPlayer = Players:FindFirstChild(userName)
-	if targetPlayer then
-		return roleName .. ": " .. targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
-	end
-	return roleName .. ": " .. userName
 end
-
-local function notifyAllRoles()
-	local mText = getFormattedRoleText("Murderer", MurdererName)
-	local sText = getFormattedRoleText("Sheriff", SheriffName)
-	local hText = getFormattedRoleText("Hero", HeroName)
-	sendNotification("MM2 Roles", mText .. "\n" .. sText .. "\n" .. hText)
 end
-
-local notifyRolesButton = createActionButton("NotifyRoles", "Notify Roles")
-notifyRolesButton.MouseButton1Click:Connect(function()
-	notifyAllRoles()
+local fib,fii=tog("Fling On Touch")
+fib.MouseButton1Click:Connect(function()
+flingInt=not flingInt
+if flingInt then
+fib.BackgroundColor3=Color3.fromRGB(70,45,35)
+fii.BackgroundColor3=Color3.fromRGB(230,100,55)
+flingActive=true
+flingThread=coroutine.create(flingLoop)
+coroutine.resume(flingThread)
+else
+off_(fib,fii)
+flingActive=false
+end
 end)
-
-local autoNotifyButton, autoNotifyIndicator = createToggle("AutoNotifyRound", "Auto Notify Round")
-
-autoNotifyButton.MouseButton1Click:Connect(function()
-	autoNotifyRoles = not autoNotifyRoles
-	if autoNotifyRoles then
-		setToggleOn(autoNotifyButton, autoNotifyIndicator)
-	else
-		setToggleOff(autoNotifyButton, autoNotifyIndicator)
-	end
+sec("ROLE ESP SETTINGS")
+local espB={}
+local function mkEsp(r)
+local b,i=tog(r.." ESP")
+espB[r]={b=b,i=i}
+b.MouseButton1Click:Connect(function()
+espOn[r]=not espOn[r]
+if espOn[r] then
+b.BackgroundColor3=RC[r]:Lerp(Color3.fromRGB(20,20,25),0.65)
+i.BackgroundColor3=RC[r]
+else off_(b,i) end
 end)
-
---==================================================
--- AUTO SEND MURDERER IN CHAT
---==================================================
-
-local autoMurdererChatButton, autoMurdererChatIndicator = createToggle("AutoMurdererChat", "Auto Send Murderer In Chat")
-
-autoMurdererChatButton.MouseButton1Click:Connect(function()
-	autoSendMurdererChat = not autoSendMurdererChat
-	if autoSendMurdererChat then
-		setToggleOn(autoMurdererChatButton, autoMurdererChatIndicator)
-		lastChatSentMurderer = nil
-	else
-		setToggleOff(autoMurdererChatButton, autoMurdererChatIndicator)
-		lastChatSentMurderer = nil
-	end
+end
+mkEsp("Innocent")
+mkEsp("Murderer")
+mkEsp("Sheriff")
+mkEsp("Hero")
+sec("ITEM ESP SETTINGS")
+local gunBtn,gunInd=tog("Gun ESP")
+gunBtn.MouseButton1Click:Connect(function()
+gunOn=not gunOn
+if gunOn then
+gunBtn.BackgroundColor3=GC:Lerp(Color3.fromRGB(20,20,25),0.65)
+gunInd.BackgroundColor3=GC
+else
+off_(gunBtn,gunInd)
+for g,h in pairs(gunHLs) do if h then pcall(function() h:Destroy() end) end end
+gunHLs={}
+end
 end)
-
---==================================================
--- MURDERER SETTINGS
---==================================================
-
-createSectionTitle("MURDERER SETTINGS")
-
+sec("NOTIFIER SETTINGS")
+local function fmt(r,n)
+if not n then return r..": None" end
+local t=P:FindFirstChild(n)
+if t then return r..": "..t.DisplayName.." (@"..t.Name..")" end
+return r..": "..n
+end
+local function notifyAll()
+note("MM2 Roles",fmt("Murderer",M).."\n"..fmt("Sheriff",S).."\n"..fmt("Hero",H))
+end
+btn("Notify Roles").MouseButton1Click:Connect(notifyAll)
+local anb,ani=tog("Auto Notify Round")
+anb.MouseButton1Click:Connect(function()
+notifyA=not notifyA
+if notifyA then on_(anb,ani) else off_(anb,ani) end
+end)
+local acb,aci=tog("Auto Send Murderer In Chat")
+acb.MouseButton1Click:Connect(function()
+autoChat=not autoChat
+if autoChat then on_(acb,aci) lastChat=nil roundActive=false
+else off_(acb,aci) lastChat=nil roundActive=false end
+end)
+sec("MURDERER SETTINGS")
 local function getKnife()
-	local character = player.Character
-	if not character then return nil end
-
-	local knife = character:FindFirstChild("Knife")
-	if not knife then
-		local backpack = player:FindFirstChild("Backpack")
-		if backpack then
-			knife = backpack:FindFirstChild("Knife")
-			if knife then knife.Parent = character end
-		end
-	end
-	return knife
+local c=pl.Character
+if not c then return nil end
+local k=c:FindFirstChild("Knife")
+if not k then
+local bp=pl:FindFirstChild("Backpack")
+if bp then k=bp:FindFirstChild("Knife") if k then k.Parent=c end end
 end
-
-local function attackTarget(target)
-	if not target or target == player or not target.Character then return end
-	if isPlayerInSpawn(target) then return end
-
-	local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
-	local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-
-	if targetRoot and myRoot then
-		local knife = getKnife()
-		if knife then
-			myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1.5)
-			task.wait(0.05)
-			pcall(function() knife:Activate() end)
-		end
-	end
+return k
 end
-
-local function killAllPlayers()
-	for _, target in ipairs(Players:GetPlayers()) do
-		if target ~= player and target.Character then
-			local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
-			if humanoid and humanoid.Health > 0 and not isPlayerInSpawn(target) then
-				attackTarget(target)
-				task.wait(0.2)
-			end
-		end
-	end
+local function attack(t)
+if not t or t==pl or not t.Character then return end
+if inSp(t) then return end
+local tr=t.Character:FindFirstChild("HumanoidRootPart")
+local mr=pl.Character and pl.Character:FindFirstChild("HumanoidRootPart")
+if tr and mr then
+local k=getKnife()
+if k then
+mr.CFrame=tr.CFrame*CFrame.new(0,0,1.5)
+task.wait(0.05)
+pcall(function() k:Activate() end)
 end
-
-local function killTargetByName(name)
-	if not name then return end
-	local target = Players:FindFirstChild(name)
-	if target then
-		attackTarget(target)
-	end
 end
-
-local autoKillButton, autoKillIndicator = createToggle("AutoKillAll", "Auto Kill All")
-
-autoKillButton.MouseButton1Click:Connect(function()
-	autoKillAll = not autoKillAll
-	if autoKillAll then
-		setToggleOn(autoKillButton, autoKillIndicator)
-	else
-		setToggleOff(autoKillButton, autoKillIndicator)
-	end
+end
+local function killAll()
+for _,t in ipairs(P:GetPlayers()) do
+if t~=pl and t.Character then
+local h=t.Character:FindFirstChildOfClass("Humanoid")
+if h and h.Health>0 and not inSp(t) then attack(t) task.wait(0.2) end
+end
+end
+end
+local function killN(n)
+if not n then return end
+local t=P:FindFirstChild(n)
+if t then attack(t) end
+end
+local akb,aki=tog("Auto Kill All")
+akb.MouseButton1Click:Connect(function()
+autoKill=not autoKill
+if autoKill then on_(akb,aki) else off_(akb,aki) end
 end)
-
-local killAllButton = createActionButton("KillAllNow", "Kill All Now")
-killAllButton.MouseButton1Click:Connect(function()
-	killAllPlayers()
-end)
-
-local killSheriffButton = createActionButton("KillSheriffNow", "Kill Sheriff Now")
-killSheriffButton.MouseButton1Click:Connect(function()
-	killTargetByName(SheriffName)
-end)
-
-local killHeroButton = createActionButton("KillHeroNow", "Kill Hero Now")
-killHeroButton.MouseButton1Click:Connect(function()
-	killTargetByName(HeroName)
-end)
-
---==================================================
--- SHERIFF SETTINGS
---==================================================
-
-createSectionTitle("SHERIFF SETTINGS")
-
+btn("Kill All Now").MouseButton1Click:Connect(killAll)
+btn("Kill Sheriff Now").MouseButton1Click:Connect(function() killN(S) end)
+btn("Kill Hero Now").MouseButton1Click:Connect(function() killN(H) end)
+sec("SHERIFF SETTINGS")
 local function getGun()
-	local character = player.Character
-	if not character then return nil end
-
-	local gun = character:FindFirstChild("Gun")
-	if not gun then
-		local backpack = player:FindFirstChild("Backpack")
-		if backpack then
-			gun = backpack:FindFirstChild("Gun")
-			if gun then gun.Parent = character end
-		end
-	end
-	return gun
+local c=pl.Character
+if not c then return nil end
+local g=c:FindFirstChild("Gun")
+if not g then
+local bp=pl:FindFirstChild("Backpack")
+if bp then g=bp:FindFirstChild("Gun") if g then g.Parent=c end end
 end
-
-local function shootMurderer()
-	if not MurdererName then
-		sendNotification("MM2 Menu", "Murderer not found yet!")
-		return
-	end
-
-	local target = Players:FindFirstChild(MurdererName)
-	if not target or not target.Character then return end
-	if isPlayerInSpawn(target) then
-		sendNotification("MM2 Menu", "Murderer is in spawn/lobby!")
-		return
-	end
-
-	local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
-	local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-
-	if targetRoot and myRoot then
-		local gun = getGun()
-		if gun then
-			myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 5)
-			task.wait(0.08)
-
-			local shootRemote = gun:FindFirstChild("Shoot") or ReplicatedStorage:FindFirstChild("Shoot", true)
-			if shootRemote and shootRemote:IsA("RemoteEvent") then
-				pcall(function() shootRemote:FireServer(targetRoot.CFrame, targetRoot.Position) end)
-			else
-				pcall(function() gun:Activate() end)
-			end
-		else
-			sendNotification("MM2 Menu", "You do not have a Gun equipped!")
-		end
-	end
+return g
 end
-
-local killMurdererButton = createActionButton("KillMurdererNow", "Kill Murderer Now")
-killMurdererButton.MouseButton1Click:Connect(function()
-	shootMurderer()
+btn("Kill Murderer Now").MouseButton1Click:Connect(function()
+if not M then note("MM2 Menu","Murderer not found yet!") return end
+local t=P:FindFirstChild(M)
+if not t or not t.Character then return end
+if inSp(t) then note("MM2 Menu","Murderer is in spawn/lobby!") return end
+local tr=t.Character:FindFirstChild("HumanoidRootPart")
+local mr=pl.Character and pl.Character:FindFirstChild("HumanoidRootPart")
+if tr and mr then
+local g=getGun()
+if g then
+mr.CFrame=tr.CFrame*CFrame.new(0,0,5)
+task.wait(0.08)
+local sr=g:FindFirstChild("Shoot") or RS:FindFirstChild("Shoot",true)
+if sr and sr:IsA("RemoteEvent") then pcall(function() sr:FireServer(tr.CFrame,tr.Position) end)
+else pcall(function() g:Activate() end) end
+else note("MM2 Menu","You do not have a Gun equipped!") end
+end
 end)
-
---==================================================
--- TELEPORT SETTINGS
---==================================================
-
-createSectionTitle("TELEPORT SETTINGS")
-
-local function teleportToGun()
-	local character = player.Character
-	if not character then return false end
-	local myRoot = character:FindFirstChild("HumanoidRootPart")
-	if not myRoot then return false end
-
-	local gunDrop = workspace:FindFirstChild("GunDrop", true) or workspace:FindFirstChild("Gun", true)
-	if gunDrop then
-		local targetPart = nil
-		if gunDrop:IsA("BasePart") then
-			targetPart = gunDrop
-		elseif gunDrop:IsA("Model") then
-			targetPart = gunDrop.PrimaryPart or gunDrop:FindFirstChildOfClass("BasePart")
-		elseif gunDrop:IsA("Tool") then
-			targetPart = gunDrop:FindFirstChild("Handle") or gunDrop:FindFirstChildOfClass("BasePart")
-		end
-		if targetPart then
-			if (myRoot.Position - targetPart.Position).Magnitude < 8 then return true end
-			myRoot.CFrame = targetPart.CFrame + Vector3.new(0, 3, 0)
-			return true
-		end
-	end
-	return false
+sec("TELEPORT SETTINGS")
+local function tpGun()
+local c=pl.Character
+if not c then return false end
+local mr=c:FindFirstChild("HumanoidRootPart")
+if not mr then return false end
+local gd=workspace:FindFirstChild("GunDrop",true) or workspace:FindFirstChild("Gun",true)
+if not gd then return false end
+local tp=nil
+if gd:IsA("BasePart") then tp=gd
+elseif gd:IsA("Model") then tp=gd.PrimaryPart or gd:FindFirstChildOfClass("BasePart")
+elseif gd:IsA("Tool") then tp=gd:FindFirstChild("Handle") or gd:FindFirstChildOfClass("BasePart")
 end
-
-local autoGunButton, autoGunIndicator = createToggle("AutoGunTP", "Auto Teleport To Gun")
-
-autoGunButton.MouseButton1Click:Connect(function()
-	autoGunTP = not autoGunTP
-	if autoGunTP then
-		setToggleOn(autoGunButton, autoGunIndicator)
-	else
-		setToggleOff(autoGunButton, autoGunIndicator)
-	end
+if not tp then return false end
+if (mr.Position-tp.Position).Magnitude<8 then return true end
+mr.CFrame=tp.CFrame+Vector3.new(0,3,0)
+return true
+end
+local agb,agi=tog("Auto Teleport To Gun")
+agb.MouseButton1Click:Connect(function()
+autoGunTP=not autoGunTP
+if autoGunTP then on_(agb,agi) else off_(agb,agi) end
 end)
-
-local spawnTeleportButton = createActionButton("SpawnTeleport", "Teleport To Spawn")
-spawnTeleportButton.MouseButton1Click:Connect(function()
-	local character = player.Character
-	if not character then return end
-	local myRoot = character:FindFirstChild("HumanoidRootPart")
-	if not myRoot then return end
-
-	local spawnLocation = workspace:FindFirstChildOfClass("SpawnLocation")
-	if spawnLocation then
-		myRoot.CFrame = spawnLocation.CFrame + Vector3.new(0, 3, 0)
-		return
-	end
-
-	local spawnPoint = workspace:FindFirstChild("Spawn", true)
-	if spawnPoint and spawnPoint:IsA("BasePart") then
-		myRoot.CFrame = spawnPoint.CFrame + Vector3.new(0, 3, 0)
-	end
+btn("Teleport To Spawn").MouseButton1Click:Connect(function()
+local c=pl.Character
+if not c then return end
+local mr=c:FindFirstChild("HumanoidRootPart")
+if not mr then return end
+local sl=workspace:FindFirstChildOfClass("SpawnLocation")
+if sl then mr.CFrame=sl.CFrame+Vector3.new(0,3,0) return end
+local sp=workspace:FindFirstChild("Spawn",true)
+if sp and sp:IsA("BasePart") then mr.CFrame=sp.CFrame+Vector3.new(0,3,0) end
 end)
-
-local gunTeleportButton = createActionButton("GunTeleport", "Teleport To Gun")
-gunTeleportButton.MouseButton1Click:Connect(function()
-	if not teleportToGun() then
-		sendNotification("MM2 Menu", "No dropped gun found on the map!")
-	end
+btn("Teleport To Gun").MouseButton1Click:Connect(function()
+if not tpGun() then note("MM2 Menu","No dropped gun found on the map!") end
 end)
-
-local playerTeleportButton = createActionButton("PlayerTeleport", "Teleport To Player")
-local killSelectedButton = createActionButton("KillSelectedPlayer", "Kill Selected Player")
-
-local selectedPlayer = nil
-
-local playerDropdown = Instance.new("TextButton")
-playerDropdown.Name = "PlayerDropdown"
-playerDropdown.Size = UDim2.new(1, 0, 0, 36)
-playerDropdown.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-playerDropdown.BorderSizePixel = 0
-playerDropdown.Text = "Select Player"
-playerDropdown.TextColor3 = Color3.fromRGB(230, 230, 235)
-playerDropdown.TextSize = 12
-playerDropdown.Font = Enum.Font.GothamSemibold
-playerDropdown.AutoButtonColor = false
-playerDropdown.LayoutOrder = getLayoutOrder()
-playerDropdown.Parent = content
-
-local dropdownCorner = Instance.new("UICorner")
-dropdownCorner.CornerRadius = UDim.new(0, 8)
-dropdownCorner.Parent = playerDropdown
-
-local dropdownOpen = false
-
-local playerList = Instance.new("ScrollingFrame")
-playerList.Name = "PlayerList"
-playerList.Size = UDim2.new(1, 0, 0, 0)
-playerList.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
-playerList.BorderSizePixel = 0
-playerList.Visible = false
-playerList.ClipsDescendants = true
-playerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
-playerList.ScrollingDirection = Enum.ScrollingDirection.Y
-playerList.ScrollBarThickness = 5
-playerList.ScrollBarImageColor3 = Color3.fromRGB(75, 77, 85)
-playerList.LayoutOrder = getLayoutOrder()
-playerList.Parent = content
-
-local playerListCorner = Instance.new("UICorner")
-playerListCorner.CornerRadius = UDim.new(0, 8)
-playerListCorner.Parent = playerList
-
-local playerListLayout = Instance.new("UIListLayout")
-playerListLayout.Padding = UDim.new(0, 2)
-playerListLayout.SortOrder = Enum.SortOrder.Name
-playerListLayout.Parent = playerList
-
-local function refreshPlayerList()
-	for _, child in ipairs(playerList:GetChildren()) do
-		if child:IsA("TextButton") then child:Destroy() end
-	end
-
-	for _, target in ipairs(Players:GetPlayers()) do
-		if target ~= player then
-			local option = Instance.new("TextButton")
-			option.Name = target.Name
-			option.Size = UDim2.new(1, -10, 0, 30)
-			option.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
-			option.BorderSizePixel = 0
-			option.Text = target.DisplayName .. " (@" .. target.Name .. ")"
-			option.TextColor3 = Color3.fromRGB(230, 230, 235)
-			option.TextSize = 12
-			option.Font = Enum.Font.GothamSemibold
-			option.AutoButtonColor = false
-			option.Parent = playerList
-
-			local corner = Instance.new("UICorner")
-			corner.CornerRadius = UDim.new(0, 6)
-			corner.Parent = option
-
-			option.MouseButton1Click:Connect(function()
-				selectedPlayer = target
-				playerDropdown.Text = "Selected: " .. target.Name
-				dropdownOpen = false
-				playerList.Visible = false
-				playerList.Size = UDim2.new(1, 0, 0, 0)
-				playerList.CanvasPosition = Vector2.new(0, 0)
-			end)
-		end
-	end
-end
-
-playerDropdown.MouseButton1Click:Connect(function()
-	dropdownOpen = not dropdownOpen
-	if dropdownOpen then
-		refreshPlayerList()
-		playerList.Visible = true
-		playerList.Size = UDim2.new(1, 0, 0, 120)
-	else
-		playerList.Visible = false
-		playerList.Size = UDim2.new(1, 0, 0, 0)
-		playerList.CanvasPosition = Vector2.new(0, 0)
-	end
+local sel=nil
+local ddBtn=N("TextButton",{Name="PlayerDropdown",Size=UDim2.new(1,0,0,36),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text="Select Player",TextColor3=Color3.fromRGB(230,230,235),TextSize=12,Font=Enum.Font.GothamSemibold,AutoButtonColor=false,LayoutOrder=nLO()},content)
+N("UICorner",{CornerRadius=UDim.new(0,8)},ddBtn)
+local ddOpen=false
+local plist=N("ScrollingFrame",{Size=UDim2.new(1,0,0,0),BackgroundColor3=Color3.fromRGB(29,30,37),BorderSizePixel=0,Visible=false,ClipsDescendants=true,AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollingDirection=Enum.ScrollingDirection.Y,ScrollBarThickness=5,LayoutOrder=nLO()},content)
+N("UICorner",{CornerRadius=UDim.new(0,8)},plist)
+N("UIListLayout",{Padding=UDim.new(0,2),SortOrder=Enum.SortOrder.Name},plist)
+local function refreshList()
+for _,ch in ipairs(plist:GetChildren()) do if ch:IsA("TextButton") then ch:Destroy() end end
+for _,t in ipairs(P:GetPlayers()) do
+if t~=pl then
+local o=N("TextButton",{Name=t.Name,Size=UDim2.new(1,-10,0,30),BackgroundColor3=Color3.fromRGB(34,36,43),BorderSizePixel=0,Text=t.DisplayName.." (@"..t.Name..")",TextColor3=Color3.fromRGB(230,230,235),TextSize=12,Font=Enum.Font.GothamSemibold,AutoButtonColor=false},plist)
+N("UICorner",{CornerRadius=UDim.new(0,6)},o)
+o.MouseButton1Click:Connect(function()
+sel=t
+ddBtn.Text="Selected: "..t.Name
+ddOpen=false
+plist.Visible=false
+plist.Size=UDim2.new(1,0,0,0)
 end)
-
-playerTeleportButton.MouseButton1Click:Connect(function()
-	if not selectedPlayer or not selectedPlayer.Character then return end
-	local targetRoot = selectedPlayer.Character:FindFirstChild("HumanoidRootPart")
-	local character = player.Character
-	if character and targetRoot then
-		local myRoot = character:FindFirstChild("HumanoidRootPart")
-		if myRoot then myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0) end
-	end
+end
+end
+end
+ddBtn.MouseButton1Click:Connect(function()
+ddOpen=not ddOpen
+if ddOpen then
+refreshList()
+plist.Visible=true
+plist.Size=UDim2.new(1,0,0,120)
+else
+plist.Visible=false
+plist.Size=UDim2.new(1,0,0,0)
+end
 end)
-
-killSelectedButton.MouseButton1Click:Connect(function()
-	if selectedPlayer then attackTarget(selectedPlayer) end
+btn("Teleport To Player").MouseButton1Click:Connect(function()
+if not sel or not sel.Character then return end
+local tr=sel.Character:FindFirstChild("HumanoidRootPart")
+local c=pl.Character
+if c and tr then
+local mr=c:FindFirstChild("HumanoidRootPart")
+if mr then mr.CFrame=tr.CFrame+Vector3.new(0,3,0) end
+end
 end)
-
-Players.PlayerAdded:Connect(function() if dropdownOpen then refreshPlayerList() end end)
-Players.PlayerRemoving:Connect(function(target)
-	if selectedPlayer == target then
-		selectedPlayer = nil
-		playerDropdown.Text = "Select Player"
-	end
-	if dropdownOpen then refreshPlayerList() end
+btn("Kill Selected Player").MouseButton1Click:Connect(function()
+if sel then attack(sel) end
 end)
-
-local murdererTeleport = createActionButton("TeleportMurderer", "Teleport To Murderer")
-local sheriffTeleport = createActionButton("TeleportSheriff", "Teleport To Sheriff")
-local heroTeleport = createActionButton("TeleportHero", "Teleport To Hero")
-
-local function teleportToPlayerByName(name)
-	if not name then return end
-	local target = Players:FindFirstChild(name)
-	if not target or not target.Character then return end
-	local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
-	local character = player.Character
-	if character and targetRoot then
-		local myRoot = character:FindFirstChild("HumanoidRootPart")
-		if myRoot then myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0) end
-	end
-end
-
-murdererTeleport.MouseButton1Click:Connect(function() teleportToPlayerByName(MurdererName) end)
-sheriffTeleport.MouseButton1Click:Connect(function() teleportToPlayerByName(SheriffName) end)
-heroTeleport.MouseButton1Click:Connect(function() teleportToPlayerByName(HeroName) end)
-
---==================================================
--- UTILITY SETTINGS
---==================================================
-
-createSectionTitle("UTILITY SETTINGS")
-
-local antiVoidButton, antiVoidIndicator = createToggle("AntiVoid", "Anti Fall Down (Void)")
-local antiFlingButton, antiFlingIndicator = createToggle("AntiFling", "Anti Fling")
-
-antiVoidButton.MouseButton1Click:Connect(function()
-	antiVoidEnabled = not antiVoidEnabled
-	if antiVoidEnabled then
-		setToggleOn(antiVoidButton, antiVoidIndicator)
-	else
-		setToggleOff(antiVoidButton, antiVoidIndicator)
-	end
+P.PlayerAdded:Connect(function() if ddOpen then refreshList() end end)
+P.PlayerRemoving:Connect(function(t)
+if sel==t then sel=nil ddBtn.Text="Select Player" end
+if ddOpen then refreshList() end
 end)
-
-antiFlingButton.MouseButton1Click:Connect(function()
-	antiFlingEnabled = not antiFlingEnabled
-	if antiFlingEnabled then
-		setToggleOn(antiFlingButton, antiFlingIndicator)
-	else
-		setToggleOff(antiFlingButton, antiFlingIndicator)
-	end
+local function tpN(n)
+if not n then return end
+local t=P:FindFirstChild(n)
+if not t or not t.Character then return end
+local tr=t.Character:FindFirstChild("HumanoidRootPart")
+local c=pl.Character
+if c and tr then
+local mr=c:FindFirstChild("HumanoidRootPart")
+if mr then mr.CFrame=tr.CFrame+Vector3.new(0,3,0) end
+end
+end
+btn("Teleport To Murderer").MouseButton1Click:Connect(function() tpN(M) end)
+btn("Teleport To Sheriff").MouseButton1Click:Connect(function() tpN(S) end)
+btn("Teleport To Hero").MouseButton1Click:Connect(function() tpN(H) end)
+sec("UTILITY SETTINGS")
+local avb,avi=tog("Anti Fall Down (Void)")
+local afb,afi=tog("Anti Fling")
+avb.MouseButton1Click:Connect(function()
+antiVoid=not antiVoid
+if antiVoid then on_(avb,avi) else off_(avb,avi) end
 end)
-
-local function resetAllToggles()
-	if noclip then
-		noclip = false
-		setToggleOff(noclipButton, noclipIndicator)
-		for object, oldValue in pairs(originalCollision) do
-			if object and object.Parent then
-				object.CanCollide = oldValue
-			end
-		end
-		originalCollision = {}
-	end
-
-	if flyEnabled then stopFly() end
-	flyPanelOpen = false
-	flyPanel.Visible = false
-
-	if infinityJump then
-		infinityJump = false
-		setToggleOff(infinityJumpButton, infinityJumpIndicator)
-	end
-
-	if flingThirdParty then
-		flingThirdParty = false
-		setToggleOff(flingThirdPartyButton, flingThirdPartyIndicator)
-	end
-
-	if flingOnTouch then
-		flingOnTouch = false
-		flingTouchActive = false
-		setToggleOff(flingOnTouchButton, flingOnTouchIndicator)
-	end
-
-	if speedhackEnabled then
-		speedhackEnabled = false
-		setToggleOff(speedhackButton, speedhackIndicator)
-		local character = player.Character
-		if character then
-			local humanoid = character:FindFirstChildOfClass("Humanoid")
-			if humanoid then humanoid.WalkSpeed = 16 end
-		end
-	end
-
-	for role, state in pairs(espEnabled) do
-		if state then
-			espEnabled[role] = false
-			if espButtons[role] then
-				setToggleOff(espButtons[role].Button, espButtons[role].Indicator)
-			end
-		end
-	end
-
-	if gunESPEnabled then
-		gunESPEnabled = false
-		setToggleOff(gunESPButton, gunESPIndicator)
-		for gun, hl in pairs(gunHighlights) do
-			if hl then pcall(function() hl:Destroy() end) end
-		end
-		gunHighlights = {}
-	end
-
-	if autoNotifyRoles then
-		autoNotifyRoles = false
-		setToggleOff(autoNotifyButton, autoNotifyIndicator)
-	end
-
-	if autoSendMurdererChat then
-		autoSendMurdererChat = false
-		setToggleOff(autoMurdererChatButton, autoMurdererChatIndicator)
-		lastChatSentMurderer = nil
-	end
-
-	if autoKillAll then
-		autoKillAll = false
-		setToggleOff(autoKillButton, autoKillIndicator)
-	end
-
-	if autoGunTP then
-		autoGunTP = false
-		setToggleOff(autoGunButton, autoGunIndicator)
-	end
-
-	if antiVoidEnabled then
-		antiVoidEnabled = false
-		setToggleOff(antiVoidButton, antiVoidIndicator)
-	end
-
-	if antiFlingEnabled then
-		antiFlingEnabled = false
-		setToggleOff(antiFlingButton, antiFlingIndicator)
-	end
-
-	sendNotification("MM2 Menu", "All features turned off")
-end
-
-local turnOffAllButton = Instance.new("TextButton")
-turnOffAllButton.Name = "TurnOffAll"
-turnOffAllButton.Size = UDim2.new(1, 0, 0, 36)
-turnOffAllButton.BackgroundColor3 = Color3.fromRGB(70, 40, 40)
-turnOffAllButton.BorderSizePixel = 0
-turnOffAllButton.Text = "TURN OFF ALL"
-turnOffAllButton.TextColor3 = Color3.fromRGB(255, 200, 200)
-turnOffAllButton.TextSize = 13
-turnOffAllButton.Font = Enum.Font.GothamBold
-turnOffAllButton.AutoButtonColor = false
-turnOffAllButton.LayoutOrder = getLayoutOrder()
-turnOffAllButton.Parent = content
-
-local turnOffCorner = Instance.new("UICorner")
-turnOffCorner.CornerRadius = UDim.new(0, 8)
-turnOffCorner.Parent = turnOffAllButton
-
-turnOffAllButton.MouseButton1Click:Connect(resetAllToggles)
-
---==================================================
--- ESP SYSTEM (compact — rejects dead AND in-spawn)
---==================================================
-
-local highlights = {}
-
-local function CreateHighlight(target)
-	if target == player or not target.Character then return end
-	local highlight = target.Character:FindFirstChild("RoleESP")
-	if not highlight then
-		highlight = Instance.new("Highlight")
-		highlight.Name = "RoleESP"
-		highlight.FillTransparency = 0.45
-		highlight.OutlineTransparency = 0
-		highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-		highlight.Parent = target.Character
-	end
-	highlights[target] = highlight
-end
-
-local function IsAlive(target)
-	if not target or not target.Character then return false end
-	local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
-	return humanoid and humanoid.Health > 0
-end
-
-local function isRoleHolderValid(target)
-	if not target then return false end
-	if not target.Character then return false end
-	local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
-	if not humanoid or humanoid.Health <= 0 then return false end
-	if isPlayerInSpawn(target) then return false end
-	return true
-end
-
-local function isCachedRoleHolderValid(name)
-	if not name then return false end
-	local target = Players:FindFirstChild(name)
-	if not target then return false end
-	return isRoleHolderValid(target)
-end
-
-local function resolveRole(reportedName)
-	if not reportedName then return nil end
-	local targetPlayer = Players:FindFirstChild(reportedName)
-	if not targetPlayer then return nil end
-	if not isRoleHolderValid(targetPlayer) then return nil end
-	return reportedName
-end
-
-local function GetRoles()
-	if not GetPlayerData then return end
-
-	local success, result = pcall(function() return GetPlayerData:InvokeServer() end)
-	if not success or type(result) ~= "table" then
-		return
-	end
-
-	local newMurderer, newSheriff, newHero = nil, nil, nil
-
-	for name, data in pairs(result) do
-		if type(data) == "table" then
-			local role = data.Role
-			if role == "Murderer" then newMurderer = tostring(name)
-			elseif role == "Sheriff" then newSheriff = tostring(name)
-			elseif role == "Hero" then newHero = tostring(name) end
-		elseif type(data) == "string" then
-			if data == "Murderer" then newMurderer = tostring(name)
-			elseif data == "Sheriff" then newSheriff = tostring(name)
-			elseif data == "Hero" then newHero = tostring(name) end
-		end
-	end
-
-	for key, data in pairs(result) do
-		if typeof(key) == "Instance" and key:IsA("Player") then
-			local role = type(data) == "table" and data.Role or (type(data) == "string" and data or nil)
-			if role == "Murderer" then newMurderer = key.Name
-			elseif role == "Sheriff" then newSheriff = key.Name
-			elseif role == "Hero" then newHero = key.Name end
-		end
-	end
-
-	for _, target in ipairs(Players:GetPlayers()) do
-		local role = target:GetAttribute("Role")
-		if role == "Murderer" then newMurderer = target.Name
-		elseif role == "Sheriff" then newSheriff = target.Name
-		elseif role == "Hero" then newHero = target.Name end
-	end
-
-	newMurderer = resolveRole(newMurderer)
-	newSheriff = resolveRole(newSheriff)
-	newHero = resolveRole(newHero)
-
-	if newMurderer then
-		MurdererName = newMurderer
-	elseif MurdererName and not isCachedRoleHolderValid(MurdererName) then
-		MurdererName = nil
-		lastNotifiedMurderer = nil
-		lastChatSentMurderer = nil
-		roundActive = false
-	end
-
-	if newSheriff then
-		SheriffName = newSheriff
-	elseif SheriffName and not isCachedRoleHolderValid(SheriffName) then
-		SheriffName = nil
-		lastNotifiedSheriff = nil
-	end
-
-	if newHero then
-		HeroName = newHero
-	elseif HeroName and not isCachedRoleHolderValid(HeroName) then
-		HeroName = nil
-		lastNotifiedHero = nil
-	end
-
-	if autoNotifyRoles then
-		if (MurdererName and MurdererName ~= lastNotifiedMurderer)
-			or (SheriffName and SheriffName ~= lastNotifiedSheriff)
-			or (HeroName and HeroName ~= lastNotifiedHero) then
-			lastNotifiedMurderer = MurdererName
-			lastNotifiedSheriff = SheriffName
-			lastNotifiedHero = HeroName
-			notifyAllRoles()
-		end
-	end
-end
-
-local function UpdateHighlights()
-	for _, target in ipairs(Players:GetPlayers()) do
-		if target ~= player and target.Character then
-			CreateHighlight(target)
-			local highlight = target.Character:FindFirstChild("RoleESP")
-			if not highlight then continue end
-
-			local role
-			if MurdererName and target.Name == MurdererName then role = "Murderer"
-			elseif SheriffName and target.Name == SheriffName then role = "Sheriff"
-			elseif HeroName and target.Name == HeroName then role = "Hero"
-			else role = "Innocent" end
-
-			local showRoleColor = IsAlive(target) and not isPlayerInSpawn(target)
-
-			if not showRoleColor then
-				if espEnabled.Innocent then
-					local deadColor = ROLE_COLORS.Innocent
-					highlight.FillColor = deadColor
-					highlight.OutlineColor = deadColor
-					highlight.FillTransparency = 0.7
-					highlight.OutlineTransparency = 0.2
-					highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-					highlight.Enabled = true
-				else
-					highlight.Enabled = false
-				end
-			else
-				if espEnabled[role] then
-					local color = ROLE_COLORS[role]
-					highlight.FillColor = color
-					highlight.OutlineColor = color
-					highlight.FillTransparency = 0.45
-					highlight.OutlineTransparency = 0
-					highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-					highlight.Enabled = true
-				else
-					highlight.Enabled = false
-				end
-			end
-		end
-	end
-end
-
-local function RemoveHighlight(target)
-	if target.Character then
-		local highlight = target.Character:FindFirstChild("RoleESP")
-		if highlight then highlight:Destroy() end
-	end
-	highlights[target] = nil
-end
-
-for _, target in ipairs(Players:GetPlayers()) do
-	if target ~= player then
-		target.CharacterAdded:Connect(function()
-			task.wait(0.2)
-			CreateHighlight(target)
-			UpdateHighlights()
-		end)
-		if target.Character then CreateHighlight(target) end
-	end
-end
-
-Players.PlayerAdded:Connect(function(target)
-	target.CharacterAdded:Connect(function()
-		task.wait(0.2)
-		CreateHighlight(target)
-		UpdateHighlights()
-	end)
+afb.MouseButton1Click:Connect(function()
+antiFling=not antiFling
+if antiFling then on_(afb,afi) else off_(afb,afi) end
 end)
-
-Players.PlayerRemoving:Connect(function(target)
-	RemoveHighlight(target)
-	if MurdererName == target.Name then MurdererName = nil end
-	if SheriffName == target.Name then SheriffName = nil end
-	if HeroName == target.Name then HeroName = nil end
-end)
-
---==================================================
--- GUN ESP SYSTEM
---==================================================
-
-local lastGunScan = 0
-local GUN_SCAN_INTERVAL = 0.5
-
-local function isGunHeldByPlayer(gun)
-	for _, p in ipairs(Players:GetPlayers()) do
-		local char = p.Character
-		if char and gun:IsDescendantOf(char) then
-			return true
-		end
-	end
-	return false
+local function offAll()
+if noclip then noclip=false off_(ncb,nci) for o,v in pairs(origCol) do if o and o.Parent then o.CanCollide=v end end origCol={} end
+if flyOn then stopFly() end
+flyPanel.Visible=false
+if infj then infj=false off_(ijb,iji) end
+if shOn then shOn=false off_(shb,shi) local c=pl.Character if c then local h=c:FindFirstChildOfClass("Humanoid") if h then h.WalkSpeed=16 end end end
+if fling3p then fling3p=false off_(f3b,f3i) end
+if flingInt then flingInt=false flingActive=false off_(fib,fii) end
+for r,s in pairs(espOn) do if s then espOn[r]=false if espB[r] then off_(espB[r].b,espB[r].i) end end end
+if gunOn then gunOn=false off_(gunBtn,gunInd) for g,h in pairs(gunHLs) do if h then pcall(function() h:Destroy() end) end end gunHLs={} end
+if notifyA then notifyA=false off_(anb,ani) end
+if autoChat then autoChat=false off_(acb,aci) lastChat=nil roundActive=false end
+if autoKill then autoKill=false off_(akb,aki) end
+if autoGunTP then autoGunTP=false off_(agb,agi) end
+if antiVoid then antiVoid=false off_(avb,avi) end
+if antiFling then antiFling=false off_(afb,afi) end
+note("MM2 Menu","All features turned off")
 end
-
-local function isDroppedGun(inst)
-	if not inst or not inst.Parent then return false end
-	if inst.Name ~= "Gun" and inst.Name ~= "GunDrop" then return false end
-	if not (inst:IsA("BasePart") or inst:IsA("Model") or inst:IsA("Tool")) then return false end
-	if isGunHeldByPlayer(inst) then return false end
-	return true
+local toBtn=N("TextButton",{Name="TurnOffAll",Size=UDim2.new(1,0,0,36),BackgroundColor3=Color3.fromRGB(70,40,40),BorderSizePixel=0,Text="TURN OFF ALL",TextColor3=Color3.fromRGB(255,200,200),TextSize=13,Font=Enum.Font.GothamBold,AutoButtonColor=false,LayoutOrder=nLO()},content)
+N("UICorner",{CornerRadius=UDim.new(0,8)},toBtn)
+toBtn.MouseButton1Click:Connect(offAll)
+local HLs={}
+local function mkHL(t)
+if t==pl or not t.Character then return end
+local h=t.Character:FindFirstChild("RoleESP")
+if not h then
+h=N("Highlight",{Name="RoleESP",FillTransparency=0.45,OutlineTransparency=0,DepthMode=Enum.HighlightDepthMode.AlwaysOnTop},t.Character)
 end
-
-local function attachGunHighlight(gun)
-	if gunHighlights[gun] then return end
-	local hl = Instance.new("Highlight")
-	hl.Name = "GunESP"
-	hl.FillColor = GUN_COLOR
-	hl.OutlineColor = GUN_COLOR
-	hl.FillTransparency = 0.4
-	hl.OutlineTransparency = 0
-	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.Parent = gun
-	gunHighlights[gun] = hl
+HLs[t]=h
 end
-
-local function removeGunHighlight(gun)
-	local hl = gunHighlights[gun]
-	if hl then pcall(function() hl:Destroy() end) end
-	gunHighlights[gun] = nil
+local function isAlive(t)
+if not t or not t.Character then return false end
+local h=t.Character:FindFirstChildOfClass("Humanoid")
+return h and h.Health>0
 end
-
-local function updateGunESP()
-	for gun, _ in pairs(gunHighlights) do
-		if not gun or not gun.Parent or not isDroppedGun(gun) then
-			removeGunHighlight(gun)
-		end
-	end
-
-	if not gunESPEnabled then
-		for gun, _ in pairs(gunHighlights) do
-			removeGunHighlight(gun)
-		end
-		return
-	end
-
-	local now = tick()
-	if now - lastGunScan < GUN_SCAN_INTERVAL then return end
-	lastGunScan = now
-
-	for _, inst in ipairs(workspace:GetDescendants()) do
-		if isDroppedGun(inst) and not gunHighlights[inst] then
-			attachGunHighlight(inst)
-		end
-	end
+local function validRoleHolder(t)
+if not t then return false end
+if not t.Character then return false end
+local h=t.Character:FindFirstChildOfClass("Humanoid")
+if not h or h.Health<=0 then return false end
+if inSp(t) then return false end
+return true
 end
-
---==================================================
--- AUTO CHAT MURDERER SENDER
---==================================================
-
-local function sendChatMessage(message)
-	local sent = false
-
-	pcall(function()
-		local TCS = game:GetService("TextChatService")
-		if TCS.ChatVersion == Enum.ChatVersion.TextChatService then
-			local channels = TCS:FindFirstChild("TextChannels")
-			if channels then
-				local general = channels:FindFirstChild("RBXGeneral")
-				if general then
-					general:SendAsync(message)
-					sent = true
-				end
-			end
-		end
-	end)
-
-	if sent then return true end
-
-	pcall(function()
-		StarterGui:SetCore("ChatSendMessage", message)
-		sent = true
-	end)
-
-	return sent
+local function cachedValid(n)
+if not n then return false end
+local t=P:FindFirstChild(n)
+if not t then return false end
+return validRoleHolder(t)
 end
-
-local function checkAutoSendMurderer()
-	if not autoSendMurdererChat then return end
-
-	local murdererDetected = MurdererName ~= nil
-
-	if murdererDetected and not roundActive then
-		roundActive = true
-		lastChatSentMurderer = nil
-	end
-
-	if not murdererDetected and roundActive then
-		roundActive = false
-		lastChatSentMurderer = nil
-		return
-	end
-
-	if not murdererDetected then return end
-	if lastChatSentMurderer == MurdererName then return end
-
-	local now = tick()
-	if now - chatSendCooldown < 1 then return end
-
-	local targetPlayer = Players:FindFirstChild(MurdererName)
-	local displayText = MurdererName
-	if targetPlayer then
-		displayText = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
-	end
-
-	local message = "Murderer is: " .. displayText
-	if sendChatMessage(message) then
-		lastChatSentMurderer = MurdererName
-		chatSendCooldown = now
-	end
+local function resolveRole(n)
+if not n then return nil end
+local t=P:FindFirstChild(n)
+if not t then return nil end
+if not validRoleHolder(t) then return nil end
+return n
 end
-
---==================================================
--- NOCLIP LOOP
---==================================================
-
-RunService.Stepped:Connect(function()
-	if not noclip or not player.Character then return end
-	for _, object in ipairs(player.Character:GetDescendants()) do
-		if object:IsA("BasePart") then object.CanCollide = false end
-	end
+local function getRoles()
+if not GPD then return end
+local ok,res=pcall(function() return GPD:InvokeServer() end)
+if not ok or type(res)~="table" then return end
+local nm,ns,nh=nil,nil,nil
+for k,v in pairs(res) do
+if type(v)=="table" then
+if v.Role=="Murderer" then nm=tostring(k)
+elseif v.Role=="Sheriff" then ns=tostring(k)
+elseif v.Role=="Hero" then nh=tostring(k) end
+elseif type(v)=="string" then
+if v=="Murderer" then nm=tostring(k)
+elseif v=="Sheriff" then ns=tostring(k)
+elseif v=="Hero" then nh=tostring(k) end
+end
+end
+for k,v in pairs(res) do
+if typeof(k)=="Instance" and k:IsA("Player") then
+local r=type(v)=="table" and v.Role or (type(v)=="string" and v or nil)
+if r=="Murderer" then nm=k.Name
+elseif r=="Sheriff" then ns=k.Name
+elseif r=="Hero" then nh=k.Name end
+end
+end
+for _,t in ipairs(P:GetPlayers()) do
+local r=t:GetAttribute("Role")
+if r=="Murderer" then nm=t.Name
+elseif r=="Sheriff" then ns=t.Name
+elseif r=="Hero" then nh=t.Name end
+end
+nm=resolveRole(nm)
+ns=resolveRole(ns)
+nh=resolveRole(nh)
+if nm then M=nm elseif M and not cachedValid(M) then M=nil lastM=nil lastChat=nil roundActive=false end
+if ns then S=ns elseif S and not cachedValid(S) then S=nil lastS=nil end
+if nh then H=nh elseif H and not cachedValid(H) then H=nil lastH=nil end
+if notifyA then
+if (M and M~=lastM) or (S and S~=lastS) or (H and H~=lastH) then
+lastM=M lastS=S lastH=H
+notifyAll()
+end
+end
+end
+local function upHL()
+for _,t in ipairs(P:GetPlayers()) do
+if t~=pl and t.Character then
+mkHL(t)
+local h=t.Character:FindFirstChild("RoleESP")
+if h then
+local role
+if M and t.Name==M then role="Murderer"
+elseif S and t.Name==S then role="Sheriff"
+elseif H and t.Name==H then role="Hero"
+else role="Innocent" end
+local showRole=isAlive(t) and not inSp(t)
+if not showRole then
+if espOn.Innocent then
+h.FillColor=RC.Innocent
+h.OutlineColor=RC.Innocent
+h.FillTransparency=0.7
+h.OutlineTransparency=0.2
+h.Enabled=true
+else h.Enabled=false end
+else
+if espOn[role] then
+h.FillColor=RC[role]
+h.OutlineColor=RC[role]
+h.FillTransparency=0.45
+h.OutlineTransparency=0
+h.Enabled=true
+else h.Enabled=false end
+end
+end
+end
+end
+end
+local function rmHL(t)
+if t.Character then
+local h=t.Character:FindFirstChild("RoleESP")
+if h then h:Destroy() end
+end
+HLs[t]=nil
+end
+for _,t in ipairs(P:GetPlayers()) do
+if t~=pl then
+t.CharacterAdded:Connect(function() task.wait(0.2) mkHL(t) upHL() end)
+if t.Character then mkHL(t) end
+end
+end
+P.PlayerAdded:Connect(function(t)
+t.CharacterAdded:Connect(function() task.wait(0.2) mkHL(t) upHL() end)
 end)
-
---==================================================
--- ANTI VOID LOOP (compact)
---==================================================
-
-RunService.Heartbeat:Connect(function()
-	if not antiVoidEnabled then return end
-	if flyEnabled then return end
-	local character = player.Character
-	if not character then return end
-	local root = character:FindFirstChild("HumanoidRootPart")
-	if not root then return end
-
-	if root.Position.Y < VOID_Y_THRESHOLD then
-		local spawnLocation = workspace:FindFirstChildOfClass("SpawnLocation")
-		if spawnLocation then
-			root.CFrame = CFrame.new(spawnLocation.Position + Vector3.new(0, 5, 0))
-		else
-			root.CFrame = CFrame.new(root.Position.X, 100, root.Position.Z)
-		end
-		root.Velocity = Vector3.zero
-	end
+P.PlayerRemoving:Connect(function(t)
+rmHL(t)
+if M==t.Name then M=nil end
+if S==t.Name then S=nil end
+if H==t.Name then H=nil end
 end)
-
---==================================================
--- ANTI FLING LOOP
---==================================================
-
-RunService.Heartbeat:Connect(function()
-	if not antiFlingEnabled then return end
-	if flyEnabled then return end
-	local character = player.Character
-	if not character then return end
-	local root = character:FindFirstChild("HumanoidRootPart")
-	if not root then return end
-
-	local now = tick()
-	local velocity = root.AssemblyLinearVelocity
-	local speed = velocity.Magnitude
-
-	if speed < 100 and root.Position.Y > -50 then
-		lastSafePosition = root.CFrame
-		lastSafeUpdate = now
-	end
-
-	if speed > ANTI_FLING_MAX_SPEED then
-		root.AssemblyLinearVelocity = Vector3.zero
-		root.AssemblyAngularVelocity = Vector3.zero
-		root.RotVelocity = Vector3.zero
-
-		if lastSafePosition and (now - lastSafeUpdate) < 5 then
-			root.CFrame = lastSafePosition
-		end
-	end
-
-	local angular = root.AssemblyAngularVelocity.Magnitude
-	if angular > ANTI_FLING_MAX_ANGULAR then
-		root.AssemblyAngularVelocity = Vector3.zero
-		root.RotVelocity = Vector3.zero
-	end
+local lastGunScan=0
+local function heldBy(g)
+for _,p in ipairs(P:GetPlayers()) do
+local c=p.Character
+if c and g:IsDescendantOf(c) then return true end
+end
+return false
+end
+local function isDGun(i)
+if not i or not i.Parent then return false end
+if i.Name~="Gun" and i.Name~="GunDrop" then return false end
+if not (i:IsA("BasePart") or i:IsA("Model") or i:IsA("Tool")) then return false end
+if heldBy(i) then return false end
+return true
+end
+local function upGun()
+for g,_ in pairs(gunHLs) do
+if not g or not g.Parent or not isDGun(g) then
+local h=gunHLs[g]
+if h then pcall(function() h:Destroy() end) end
+gunHLs[g]=nil
+end
+end
+if not gunOn then return end
+local n=tick()
+if n-lastGunScan<0.5 then return end
+lastGunScan=n
+for _,i in ipairs(workspace:GetDescendants()) do
+if isDGun(i) and not gunHLs[i] then
+local h=N("Highlight",{Name="GunESP",FillColor=GC,OutlineColor=GC,FillTransparency=0.4,OutlineTransparency=0,DepthMode=Enum.HighlightDepthMode.AlwaysOnTop},i)
+gunHLs[i]=h
+end
+end
+end
+local function sendChat(msg)
+local sent=false
+pcall(function()
+local TCS=game:GetService("TextChatService")
+if TCS.ChatVersion==Enum.ChatVersion.TextChatService then
+local ch=TCS:FindFirstChild("TextChannels")
+if ch then
+local gen=ch:FindFirstChild("RBXGeneral")
+if gen then gen:SendAsync(msg) sent=true end
+end
+end
 end)
-
---==================================================
--- RESPAWN HANDLERS
---==================================================
-
-player.CharacterAdded:Connect(function(character)
-	stopFly()
-
-	originalCollision = {}
-	lastSafePosition = nil
-
-	if noclip then
-		task.wait(0.1)
-		for _, object in ipairs(character:GetDescendants()) do
-			if object:IsA("BasePart") then
-				originalCollision[object] = object.CanCollide
-				object.CanCollide = false
-			end
-		end
-	end
-
-	task.wait(0.2)
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if humanoid then
-		humanoid.PlatformStand = false
-		if speedhackEnabled then humanoid.WalkSpeed = speedhackSpeed end
-	end
-	UpdateHighlights()
+if sent then return true end
+pcall(function() SG:SetCore("ChatSendMessage",msg) sent=true end)
+return sent
+end
+local function checkChat()
+if not autoChat then return end
+if not M then
+if roundActive then roundActive=false lastChat=nil end
+return
+end
+if not roundActive then roundActive=true lastChat=nil end
+if lastChat==M then return end
+local n=tick()
+if n-chatCd<1 then return end
+local tp=P:FindFirstChild(M)
+local dt=M
+if tp then dt=tp.DisplayName.." (@"..tp.Name..")" end
+if sendChat("Murderer is: "..dt) then
+lastChat=M
+chatCd=n
+end
+end
+R.Heartbeat:Connect(function()
+if not antiVoid then return end
+if flyOn then return end
+local c=pl.Character
+if not c then return end
+local r=c:FindFirstChild("HumanoidRootPart")
+if not r then return end
+if r.Position.Y<VOID_Y then
+local sl=workspace:FindFirstChildOfClass("SpawnLocation")
+if sl then r.CFrame=CFrame.new(sl.Position+Vector3.new(0,5,0))
+else r.CFrame=CFrame.new(r.Position.X,100,r.Position.Z) end
+r.Velocity=Vector3.zero
+end
 end)
-
---==================================================
--- DRAG MENU
---==================================================
-
-local dragging = false
-local dragStart
-local dragStartPosition
-
-header.InputBegan:Connect(function(input)
-	if guiLocked then return end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = true
-		dragStart = input.Position
-		dragStartPosition = frame.Position
-	end
+R.Heartbeat:Connect(function()
+if not antiFling then return end
+if flyOn then return end
+local c=pl.Character
+if not c then return end
+local r=c:FindFirstChild("HumanoidRootPart")
+if not r then return end
+local now=tick()
+local v=r.AssemblyLinearVelocity
+if v.Magnitude<100 and r.Position.Y>-50 then
+lastSafe=r.CFrame
+lastSafeT=now
+end
+if v.Magnitude>ANTIF_SPEED then
+r.AssemblyLinearVelocity=Vector3.zero
+r.AssemblyAngularVelocity=Vector3.zero
+r.RotVelocity=Vector3.zero
+if lastSafe and (now-lastSafeT)<5 then r.CFrame=lastSafe end
+end
+if r.AssemblyAngularVelocity.Magnitude>ANTIF_ANG then
+r.AssemblyAngularVelocity=Vector3.zero
+r.RotVelocity=Vector3.zero
+end
 end)
-
-UserInputService.InputChanged:Connect(function(input)
-	if not dragging or guiLocked then return end
-	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-		local delta = input.Position - dragStart
-		frame.Position = UDim2.new(
-			dragStartPosition.X.Scale, dragStartPosition.X.Offset + delta.X,
-			dragStartPosition.Y.Scale, dragStartPosition.Y.Offset + delta.Y
-		)
-	end
+pl.CharacterAdded:Connect(function(c)
+stopFly()
+origCol={}
+lastSafe=nil
+if noclip then
+task.wait(0.1)
+for _,o in ipairs(c:GetDescendants()) do
+if o:IsA("BasePart") then origCol[o]=o.CanCollide o.CanCollide=false end
+end
+end
+task.wait(0.2)
+local h=c:FindFirstChildOfClass("Humanoid")
+if h then
+h.PlatformStand=false
+if shOn then h.WalkSpeed=shSpeed end
+end
+upHL()
 end)
-
-UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = false
-	end
+local dragging=false
+local dragS=nil
+local dragP=nil
+header.InputBegan:Connect(function(i)
+if guiLocked then return end
+if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+dragging=true
+dragS=i.Position
+dragP=frame.Position
+end
 end)
-
---==================================================
--- LOCK / MINIMIZE / CLOSE / REOPEN
---==================================================
-
+U.InputChanged:Connect(function(i)
+if not dragging or guiLocked then return end
+if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then
+local d=i.Position-dragS
+frame.Position=UDim2.new(dragP.X.Scale,dragP.X.Offset+d.X,dragP.Y.Scale,dragP.Y.Offset+d.Y)
+end
+end)
+U.InputEnded:Connect(function(i)
+if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=false end
+end)
 local function showMenu()
-	menuVisible = true
-	frame.Visible = true
-	reopenButton.Visible = false
+menuVisible=true
+frame.Visible=true
+reopen.Visible=false
 end
-
 local function hideMenu()
-	menuVisible = false
-	frame.Visible = false
-	flyPanel.Visible = false
-	flyPanelOpen = false
-	reopenButton.Visible = true
+menuVisible=false
+frame.Visible=false
+flyPanel.Visible=false
+reopen.Visible=true
 end
-
-lockButton.MouseButton1Click:Connect(function()
-	guiLocked = not guiLocked
-	if guiLocked then
-		lockButton.Text = "LOCK"
-		lockButton.BackgroundColor3 = Color3.fromRGB(70, 45, 45)
-	else
-		lockButton.Text = "L"
-		lockButton.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
-	end
+lockBtn.MouseButton1Click:Connect(function()
+guiLocked=not guiLocked
+if guiLocked then
+lockBtn.Text="LOCK"
+lockBtn.BackgroundColor3=Color3.fromRGB(70,45,45)
+else
+lockBtn.Text="L"
+lockBtn.BackgroundColor3=Color3.fromRGB(42,44,52)
+end
 end)
-
-minimizeButton.MouseButton1Click:Connect(function()
-	minimized = not minimized
-	if minimized then
-		content.Visible = false
-		frame.Size = UDim2.fromOffset(280, 48)
-		minimizeButton.Text = "+"
-	else
-		content.Visible = true
-		frame.Size = UDim2.fromOffset(280, 330)
-		minimizeButton.Text = "-"
-	end
+minBtn.MouseButton1Click:Connect(function()
+minimized=not minimized
+if minimized then
+content.Visible=false
+frame.Size=UDim2.fromOffset(280,48)
+minBtn.Text="+"
+else
+content.Visible=true
+frame.Size=UDim2.fromOffset(280,330)
+minBtn.Text="-"
+end
 end)
-
-closeButton.MouseButton1Click:Connect(function()
-	hideMenu()
-	sendNotification("MM2 Menu", "Menu closed. Click 'MM2' or press Right Shift to reopen.")
+closeBtn.MouseButton1Click:Connect(function()
+hideMenu()
+note("MM2 Menu","Menu closed. Click 'MM2' or press Right Shift to reopen.")
 end)
-
-closeButton.MouseEnter:Connect(function()
-	closeButton.BackgroundColor3 = Color3.fromRGB(180, 55, 55)
+closeBtn.MouseEnter:Connect(function() closeBtn.BackgroundColor3=Color3.fromRGB(180,55,55) end)
+closeBtn.MouseLeave:Connect(function() closeBtn.BackgroundColor3=Color3.fromRGB(42,44,52) end)
+reopen.MouseButton1Click:Connect(showMenu)
+U.InputBegan:Connect(function(i,p)
+if p then return end
+if i.KeyCode==Enum.KeyCode.RightShift then
+if menuVisible then hideMenu() else showMenu() end
+end
 end)
-
-closeButton.MouseLeave:Connect(function()
-	closeButton.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
+local rdrag=false
+local rdS=nil
+local rdP=nil
+reopen.InputBegan:Connect(function(i)
+if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+rdrag=true
+rdS=i.Position
+rdP=reopen.Position
+end
 end)
-
-reopenButton.MouseButton1Click:Connect(function()
-	showMenu()
+U.InputChanged:Connect(function(i)
+if not rdrag then return end
+if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then
+local d=i.Position-rdS
+reopen.Position=UDim2.new(rdP.X.Scale,rdP.X.Offset+d.X,rdP.Y.Scale,rdP.Y.Offset+d.Y)
+end
 end)
-
-UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then return end
-	if input.KeyCode == Enum.KeyCode.RightShift then
-		if menuVisible then
-			hideMenu()
-		else
-			showMenu()
-		end
-	end
+U.InputEnded:Connect(function(i)
+if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then rdrag=false end
 end)
-
-local reopenDragging = false
-local reopenDragStart
-local reopenDragStartPosition
-
-reopenButton.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		reopenDragging = true
-		reopenDragStart = input.Position
-		reopenDragStartPosition = reopenButton.Position
-	end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-	if not reopenDragging then return end
-	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-		local delta = input.Position - reopenDragStart
-		reopenButton.Position = UDim2.new(
-			reopenDragStartPosition.X.Scale, reopenDragStartPosition.X.Offset + delta.X,
-			reopenDragStartPosition.Y.Scale, reopenDragStartPosition.Y.Offset + delta.Y
-		)
-	end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		reopenDragging = false
-	end
-end)
-
---==================================================
--- INITIAL SETUP & LOOPS
---==================================================
-
-GetRoles()
-UpdateHighlights()
-updateGunESP()
-
+getRoles()
+upHL()
+upGun()
 task.spawn(function()
-	while gui.Parent do
-		pcall(function()
-			GetRoles()
-			UpdateHighlights()
-			updateGunESP()
-
-			if autoKillAll and MurdererName == player.Name then
-				killAllPlayers()
-			end
-
-			if autoGunTP then
-				teleportToGun()
-			end
-
-			checkAutoSendMurderer()
-		end)
-
-		task.wait(0.25)
-	end
+while gui.Parent do
+pcall(function()
+getRoles()
+upHL()
+upGun()
+if autoKill and M==pl.Name then killAll() end
+if autoGunTP then tpGun() end
+checkChat()
+end)
+task.wait(0.25)
+end
 end)
