@@ -1,3 +1,1069 @@
+--//==================================================
+--// MM2 MENU BY ARBUZ v1BETA (BUGFIXED)
+--//==================================================
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+--==================================================
+-- SETTINGS
+--==================================================
+
+local ROLE_COLORS = {
+	Innocent = Color3.fromRGB(50, 210, 90),
+	Murderer = Color3.fromRGB(230, 55, 55),
+	Sheriff = Color3.fromRGB(55, 140, 255),
+	Hero = Color3.fromRGB(255, 205, 50),
+}
+
+local GUN_COLOR = Color3.fromRGB(170, 90, 230)
+
+local noclip = false
+local infinityJump = false
+local flingOnTouch = false
+local flingThirdParty = false
+local flyEnabled = false
+local autoNotifyRoles = false
+local autoKillAll = false
+local autoGunTP = false
+local autoSendMurdererChat = false
+
+local antiVoidEnabled = false
+local antiFlingEnabled = false
+
+local flySpeed = 50
+local flyMaxSpeed = 50
+
+local speedhackEnabled = false
+local speedhackSpeed = 16
+
+local guiLocked = false
+local menuVisible = true
+
+local espEnabled = {
+	Innocent = false,
+	Murderer = false,
+	Sheriff = false,
+	Hero = false,
+}
+
+local gunESPEnabled = false
+
+local originalCollision = {}
+
+-- HOISTED so resetAllToggles can see it (bug fix)
+local gunHighlights = {}
+
+local lastChatSentMurderer = nil
+local roundActive = false
+local chatSendCooldown = 0
+
+local flyPanelOpen = false
+local flyBodyVelocity = nil
+local flyBodyGyro = nil
+local flyCharacter = nil
+local flyHumanoid = nil
+local flyRoot = nil
+
+local flyControls = { f = 0, b = 0, l = 0, r = 0, up = 0, down = 0 }
+local lastFlyControls = { f = 0, b = 0, l = 0, r = 0, up = 0, down = 0 }
+local flyCurrentSpeed = 0
+
+local flingTouchActive = false
+local flingTouchThread = nil
+
+local VOID_Y_THRESHOLD = -50
+local antiVoidCooldown = false
+
+local ANTI_FLING_MAX_SPEED = 200
+local ANTI_FLING_MAX_ANGULAR = 500
+local lastSafePosition = nil
+local lastSafeUpdate = 0
+
+local GetPlayerData = nil
+pcall(function()
+	GetPlayerData = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+end)
+
+local warnedNoRemote = false
+
+local MurdererName = nil
+local SheriffName = nil
+local HeroName = nil
+
+local lastNotifiedMurderer = nil
+local lastNotifiedSheriff = nil
+local lastNotifiedHero = nil
+
+local noMurdererSince = nil
+local ROUND_END_DEBOUNCE = 2.0
+
+local function sendNotification(title, text)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title = title,
+			Text = text,
+			Duration = 5
+		})
+	end)
+end
+
+--==================================================
+-- GUI
+--==================================================
+
+local existingGui = playerGui:FindFirstChild("MM2MenuByArbuz")
+if existingGui then existingGui:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "MM2MenuByArbuz"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.IgnoreGuiInset = false
+gui.Enabled = true
+gui.DisplayOrder = 100
+gui.Parent = playerGui
+
+local frame = Instance.new("Frame")
+frame.Name = "Main"
+frame.Size = UDim2.fromOffset(280, 330)
+frame.Position = UDim2.new(0.5, -140, 0.5, -165)
+frame.BackgroundColor3 = Color3.fromRGB(22, 23, 28)
+frame.BorderSizePixel = 0
+frame.Visible = true
+frame.Active = true
+frame.Parent = gui
+
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(0, 12)
+frameCorner.Parent = frame
+
+local frameStroke = Instance.new("UIStroke")
+frameStroke.Color = Color3.fromRGB(55, 57, 65)
+frameStroke.Thickness = 1
+frameStroke.Parent = frame
+
+local header = Instance.new("Frame")
+header.Name = "Header"
+header.Size = UDim2.new(1, 0, 0, 48)
+header.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
+header.BorderSizePixel = 0
+header.Active = true
+header.Parent = frame
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 12)
+headerCorner.Parent = header
+
+local title = Instance.new("TextLabel")
+title.Name = "Title"
+title.Size = UDim2.new(1, -120, 1, 0)
+title.Position = UDim2.fromOffset(10, 0)
+title.BackgroundTransparency = 1
+title.Text = "MM2 MENU BY ARBUZ v0.9BETA"
+title.TextColor3 = Color3.fromRGB(245, 245, 250)
+title.TextSize = 12
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.TextYAlignment = Enum.TextYAlignment.Center
+title.ZIndex = 2
+title.Parent = header
+
+local closeButton = Instance.new("TextButton")
+closeButton.Name = "Close"
+closeButton.Size = UDim2.fromOffset(30, 30)
+closeButton.Position = UDim2.new(1, -105, 0.5, -15)
+closeButton.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
+closeButton.Text = "X"
+closeButton.TextSize = 16
+closeButton.TextColor3 = Color3.fromRGB(255, 200, 200)
+closeButton.Font = Enum.Font.GothamBold
+closeButton.BorderSizePixel = 0
+closeButton.AutoButtonColor = false
+closeButton.Active = true
+closeButton.ZIndex = 5
+closeButton.Parent = header
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 7)
+closeCorner.Parent = closeButton
+
+local lockButton = Instance.new("TextButton")
+lockButton.Name = "Lock"
+lockButton.Size = UDim2.fromOffset(30, 30)
+lockButton.Position = UDim2.new(1, -70, 0.5, -15)
+lockButton.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
+lockButton.Text = "L"
+lockButton.TextSize = 14
+lockButton.TextColor3 = Color3.new(1, 1, 1)
+lockButton.Font = Enum.Font.GothamBold
+lockButton.BorderSizePixel = 0
+lockButton.AutoButtonColor = false
+lockButton.Active = true
+lockButton.ZIndex = 5
+lockButton.Parent = header
+
+local lockCorner = Instance.new("UICorner")
+lockCorner.CornerRadius = UDim.new(0, 7)
+lockCorner.Parent = lockButton
+
+local minimizeButton = Instance.new("TextButton")
+minimizeButton.Name = "Minimize"
+minimizeButton.Size = UDim2.fromOffset(30, 30)
+minimizeButton.Position = UDim2.new(1, -35, 0.5, -15)
+minimizeButton.BackgroundColor3 = Color3.fromRGB(42, 44, 52)
+minimizeButton.Text = "-"
+minimizeButton.TextColor3 = Color3.new(1, 1, 1)
+minimizeButton.TextSize = 17
+minimizeButton.Font = Enum.Font.GothamBold
+minimizeButton.BorderSizePixel = 0
+minimizeButton.AutoButtonColor = false
+minimizeButton.Active = true
+minimizeButton.ZIndex = 5
+minimizeButton.Parent = header
+
+local minimizeCorner = Instance.new("UICorner")
+minimizeCorner.CornerRadius = UDim.new(0, 7)
+minimizeCorner.Parent = minimizeButton
+
+local resizeHandle = Instance.new("TextButton")
+resizeHandle.Name = "ResizeHandle"
+resizeHandle.Size = UDim2.fromOffset(16, 16)
+resizeHandle.Position = UDim2.new(1, -16, 1, -16)
+resizeHandle.BackgroundColor3 = Color3.fromRGB(55, 57, 65)
+resizeHandle.BorderSizePixel = 0
+resizeHandle.Text = ""
+resizeHandle.AutoButtonColor = false
+resizeHandle.Active = true
+resizeHandle.ZIndex = 30
+resizeHandle.Parent = frame
+
+local resizeCorner = Instance.new("UICorner")
+resizeCorner.CornerRadius = UDim.new(0, 4)
+resizeCorner.Parent = resizeHandle
+
+local MIN_WIDTH = 240
+local MIN_HEIGHT = 200
+
+local resizing = false
+local resizeStart
+local resizeStartSize
+
+resizeHandle.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		resizing = true
+		resizeStart = input.Position
+		resizeStartSize = frame.AbsoluteSize
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if not resizing then return end
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		local delta = input.Position - resizeStart
+		local newWidth = math.max(MIN_WIDTH, resizeStartSize.X + delta.X)
+		local newHeight = math.max(MIN_HEIGHT, resizeStartSize.Y + delta.Y)
+		frame.Size = UDim2.fromOffset(newWidth, newHeight)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		resizing = false
+	end
+end)
+
+local reopenButton = Instance.new("TextButton")
+reopenButton.Name = "Reopen"
+reopenButton.Size = UDim2.fromOffset(50, 50)
+reopenButton.Position = UDim2.new(0, 15, 0.5, -25)
+reopenButton.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
+reopenButton.BorderSizePixel = 0
+reopenButton.Text = "MM2"
+reopenButton.TextColor3 = Color3.fromRGB(245, 245, 250)
+reopenButton.TextSize = 13
+reopenButton.Font = Enum.Font.GothamBold
+reopenButton.AutoButtonColor = false
+reopenButton.Active = true
+reopenButton.Visible = false
+reopenButton.ZIndex = 50
+reopenButton.Parent = gui
+
+local reopenCorner = Instance.new("UICorner")
+reopenCorner.CornerRadius = UDim.new(1, 0)
+reopenCorner.Parent = reopenButton
+
+local reopenStroke = Instance.new("UIStroke")
+reopenStroke.Color = Color3.fromRGB(80, 82, 90)
+reopenStroke.Thickness = 2
+reopenStroke.Parent = reopenButton
+
+local content = Instance.new("ScrollingFrame")
+content.Name = "Content"
+content.Size = UDim2.new(1, -20, 1, -58)
+content.Position = UDim2.fromOffset(10, 53)
+content.BackgroundTransparency = 1
+content.BorderSizePixel = 0
+content.ScrollBarThickness = 5
+content.ScrollBarImageColor3 = Color3.fromRGB(75, 77, 85)
+content.AutomaticCanvasSize = Enum.AutomaticSize.Y
+content.ScrollingDirection = Enum.ScrollingDirection.Y
+content.Parent = frame
+
+local contentLayout = Instance.new("UIListLayout")
+contentLayout.Padding = UDim.new(0, 6)
+contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+contentLayout.Parent = content
+
+local currentLayoutOrder = 0
+local function getLayoutOrder()
+	currentLayoutOrder = currentLayoutOrder + 1
+	return currentLayoutOrder
+end
+
+local function createSectionTitle(text)
+	local label = Instance.new("TextLabel")
+	label.Name = text .. "Header"
+	label.Size = UDim2.new(1, 0, 0, 20)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextColor3 = Color3.fromRGB(150, 153, 165)
+	label.TextSize = 11
+	label.Font = Enum.Font.GothamBold
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.LayoutOrder = getLayoutOrder()
+	label.Parent = content
+	return label
+end
+
+local function createToggle(name, text)
+	local button = Instance.new("TextButton")
+	button.Name = name
+	button.Size = UDim2.new(1, 0, 0, 36)
+	button.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+	button.BorderSizePixel = 0
+	button.Text = text
+	button.TextColor3 = Color3.fromRGB(230, 230, 235)
+	button.TextSize = 13
+	button.Font = Enum.Font.GothamSemibold
+	button.AutoButtonColor = false
+	button.LayoutOrder = getLayoutOrder()
+	button.Parent = content
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = button
+
+	local indicator = Instance.new("Frame")
+	indicator.Name = "Indicator"
+	indicator.Size = UDim2.fromOffset(5, 20)
+	indicator.Position = UDim2.fromOffset(8, 8)
+	indicator.BackgroundColor3 = Color3.fromRGB(80, 82, 90)
+	indicator.BorderSizePixel = 0
+	indicator.Parent = button
+
+	local indicatorCorner = Instance.new("UICorner")
+	indicatorCorner.CornerRadius = UDim.new(1, 0)
+	indicatorCorner.Parent = indicator
+
+	return button, indicator
+end
+
+local function createActionButton(name, text)
+	local button = Instance.new("TextButton")
+	button.Name = name
+	button.Size = UDim2.new(1, 0, 0, 36)
+	button.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+	button.BorderSizePixel = 0
+	button.Text = text
+	button.TextColor3 = Color3.fromRGB(230, 230, 235)
+	button.TextSize = 13
+	button.Font = Enum.Font.GothamSemibold
+	button.AutoButtonColor = false
+	button.LayoutOrder = getLayoutOrder()
+	button.Parent = content
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = button
+
+	return button
+end
+
+local function setToggleOn(button, indicator)
+	button.BackgroundColor3 = Color3.fromRGB(35, 70, 45)
+	indicator.BackgroundColor3 = Color3.fromRGB(50, 210, 90)
+end
+
+local function setToggleOff(button, indicator)
+	button.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+	indicator.BackgroundColor3 = Color3.fromRGB(80, 82, 90)
+end
+
+--==================================================
+-- MOVEMENT
+--==================================================
+
+createSectionTitle("MOVEMENT SETTINGS")
+
+local noclipButton, noclipIndicator = createToggle("Noclip", "Noclip")
+
+noclipButton.MouseButton1Click:Connect(function()
+	noclip = not noclip
+	if noclip then
+		setToggleOn(noclipButton, noclipIndicator)
+		originalCollision = {}
+		if player.Character then
+			for _, object in ipairs(player.Character:GetDescendants()) do
+				if object:IsA("BasePart") then
+					originalCollision[object] = object.CanCollide
+					object.CanCollide = false
+				end
+			end
+		end
+	else
+		setToggleOff(noclipButton, noclipIndicator)
+		for object, oldValue in pairs(originalCollision) do
+			if object and object.Parent then
+				object.CanCollide = oldValue
+			end
+		end
+		originalCollision = {}
+	end
+end)
+
+local flyButton, flyIndicator = createToggle("Fly", "Fly")
+
+local flyPanel = Instance.new("Frame")
+flyPanel.Name = "FlyPanel"
+flyPanel.Size = UDim2.fromOffset(210, 220)
+flyPanel.Position = UDim2.new(0.5, 150, 0.5, -110)
+flyPanel.BackgroundColor3 = Color3.fromRGB(22, 23, 28)
+flyPanel.BorderSizePixel = 0
+flyPanel.Visible = false
+flyPanel.ZIndex = 20
+flyPanel.Parent = gui
+
+local flyPanelCorner = Instance.new("UICorner")
+flyPanelCorner.CornerRadius = UDim.new(0, 12)
+flyPanelCorner.Parent = flyPanel
+
+local flyPanelStroke = Instance.new("UIStroke")
+flyPanelStroke.Color = Color3.fromRGB(55, 57, 65)
+flyPanelStroke.Thickness = 1
+flyPanelStroke.Parent = flyPanel
+
+local flyHeader = Instance.new("Frame")
+flyHeader.Name = "Header"
+flyHeader.Size = UDim2.new(1, 0, 0, 42)
+flyHeader.BackgroundColor3 = Color3.fromRGB(29, 30, 37)
+flyHeader.BorderSizePixel = 0
+flyHeader.ZIndex = 21
+flyHeader.Parent = flyPanel
+
+local flyHeaderCorner = Instance.new("UICorner")
+flyHeaderCorner.CornerRadius = UDim.new(0, 12)
+flyHeaderCorner.Parent = flyHeader
+
+local flyTitle = Instance.new("TextLabel")
+flyTitle.Name = "Title"
+flyTitle.Size = UDim2.new(1, -20, 1, 0)
+flyTitle.Position = UDim2.fromOffset(10, 0)
+flyTitle.BackgroundTransparency = 1
+flyTitle.Text = "FLY"
+flyTitle.TextColor3 = Color3.fromRGB(245, 245, 250)
+flyTitle.TextSize = 13
+flyTitle.Font = Enum.Font.GothamBold
+flyTitle.TextXAlignment = Enum.TextXAlignment.Left
+flyTitle.TextYAlignment = Enum.TextYAlignment.Center
+flyTitle.ZIndex = 22
+flyTitle.Parent = flyHeader
+
+local flyEnableButton = Instance.new("TextButton")
+flyEnableButton.Name = "Enable"
+flyEnableButton.Size = UDim2.new(1, -20, 0, 36)
+flyEnableButton.Position = UDim2.fromOffset(10, 52)
+flyEnableButton.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+flyEnableButton.BorderSizePixel = 0
+flyEnableButton.Text = "Enable Fly"
+flyEnableButton.TextColor3 = Color3.fromRGB(230, 230, 235)
+flyEnableButton.TextSize = 13
+flyEnableButton.Font = Enum.Font.GothamSemibold
+flyEnableButton.AutoButtonColor = false
+flyEnableButton.ZIndex = 21
+flyEnableButton.Parent = flyPanel
+
+local flyEnableCorner = Instance.new("UICorner")
+flyEnableCorner.CornerRadius = UDim.new(0, 8)
+flyEnableCorner.Parent = flyEnableButton
+
+local flyEnableIndicator = Instance.new("Frame")
+flyEnableIndicator.Name = "Indicator"
+flyEnableIndicator.Size = UDim2.fromOffset(5, 20)
+flyEnableIndicator.Position = UDim2.fromOffset(8, 8)
+flyEnableIndicator.BackgroundColor3 = Color3.fromRGB(80, 82, 90)
+flyEnableIndicator.BorderSizePixel = 0
+flyEnableIndicator.ZIndex = 22
+flyEnableIndicator.Parent = flyEnableButton
+
+local flyEnableIndicatorCorner = Instance.new("UICorner")
+flyEnableIndicatorCorner.CornerRadius = UDim.new(1, 0)
+flyEnableIndicatorCorner.Parent = flyEnableIndicator
+
+local flySpeedLabel = Instance.new("TextLabel")
+flySpeedLabel.Name = "SpeedLabel"
+flySpeedLabel.Size = UDim2.new(1, -20, 0, 20)
+flySpeedLabel.Position = UDim2.fromOffset(10, 98)
+flySpeedLabel.BackgroundTransparency = 1
+flySpeedLabel.Text = "Speed: 50"
+flySpeedLabel.TextColor3 = Color3.fromRGB(150, 153, 165)
+flySpeedLabel.TextSize = 11
+flySpeedLabel.Font = Enum.Font.GothamBold
+flySpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+flySpeedLabel.ZIndex = 21
+flySpeedLabel.Parent = flyPanel
+
+local flyMinus = Instance.new("TextButton")
+flyMinus.Name = "Minus"
+flyMinus.Size = UDim2.fromOffset(36, 32)
+flyMinus.Position = UDim2.fromOffset(10, 123)
+flyMinus.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+flyMinus.BorderSizePixel = 0
+flyMinus.Text = "-"
+flyMinus.TextColor3 = Color3.fromRGB(235, 235, 240)
+flyMinus.TextSize = 18
+flyMinus.Font = Enum.Font.GothamBold
+flyMinus.AutoButtonColor = false
+flyMinus.ZIndex = 21
+flyMinus.Parent = flyPanel
+
+local flyMinusCorner = Instance.new("UICorner")
+flyMinusCorner.CornerRadius = UDim.new(0, 7)
+flyMinusCorner.Parent = flyMinus
+
+local flySpeedBox = Instance.new("TextBox")
+flySpeedBox.Name = "Speed"
+flySpeedBox.Size = UDim2.new(1, -96, 0, 32)
+flySpeedBox.Position = UDim2.fromOffset(52, 123)
+flySpeedBox.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+flySpeedBox.BorderSizePixel = 0
+flySpeedBox.Text = "50"
+flySpeedBox.TextColor3 = Color3.fromRGB(235, 235, 240)
+flySpeedBox.TextSize = 12
+flySpeedBox.Font = Enum.Font.GothamSemibold
+flySpeedBox.ClearTextOnFocus = false
+flySpeedBox.ZIndex = 21
+flySpeedBox.Parent = flyPanel
+
+local flySpeedBoxCorner = Instance.new("UICorner")
+flySpeedBoxCorner.CornerRadius = UDim.new(0, 7)
+flySpeedBoxCorner.Parent = flySpeedBox
+
+local flyPlus = Instance.new("TextButton")
+flyPlus.Name = "Plus"
+flyPlus.Size = UDim2.fromOffset(36, 32)
+flyPlus.Position = UDim2.new(1, -46, 0, 123)
+flyPlus.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+flyPlus.BorderSizePixel = 0
+flyPlus.Text = "+"
+flyPlus.TextColor3 = Color3.fromRGB(235, 235, 240)
+flyPlus.TextSize = 18
+flyPlus.Font = Enum.Font.GothamBold
+flyPlus.AutoButtonColor = false
+flyPlus.ZIndex = 21
+flyPlus.Parent = flyPanel
+
+local flyPlusCorner = Instance.new("UICorner")
+flyPlusCorner.CornerRadius = UDim.new(0, 7)
+flyPlusCorner.Parent = flyPlus
+
+local flyUp = Instance.new("TextButton")
+flyUp.Name = "Up"
+flyUp.Size = UDim2.fromOffset(85, 32)
+flyUp.Position = UDim2.fromOffset(10, 168)
+flyUp.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+flyUp.BorderSizePixel = 0
+flyUp.Text = "UP"
+flyUp.TextColor3 = Color3.fromRGB(230, 230, 235)
+flyUp.TextSize = 12
+flyUp.Font = Enum.Font.GothamBold
+flyUp.AutoButtonColor = false
+flyUp.ZIndex = 21
+flyUp.Parent = flyPanel
+
+local flyUpCorner = Instance.new("UICorner")
+flyUpCorner.CornerRadius = UDim.new(0, 7)
+flyUpCorner.Parent = flyUp
+
+local flyDown = Instance.new("TextButton")
+flyDown.Name = "Down"
+flyDown.Size = UDim2.fromOffset(85, 32)
+flyDown.Position = UDim2.new(1, -95, 0, 168)
+flyDown.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+flyDown.BorderSizePixel = 0
+flyDown.Text = "DOWN"
+flyDown.TextColor3 = Color3.fromRGB(230, 230, 235)
+flyDown.TextSize = 12
+flyDown.Font = Enum.Font.GothamBold
+flyDown.AutoButtonColor = false
+flyDown.ZIndex = 21
+flyDown.Parent = flyPanel
+
+local flyDownCorner = Instance.new("UICorner")
+flyDownCorner.CornerRadius = UDim.new(0, 7)
+flyDownCorner.Parent = flyDown
+
+local function updateFlySpeed(value)
+	value = tonumber(value)
+	if not value then value = flySpeed end
+	value = math.clamp(math.floor(value), 1, 500)
+	flySpeed = value
+	flyMaxSpeed = value
+	flySpeedLabel.Text = "Speed: " .. tostring(flySpeed)
+	flySpeedBox.Text = tostring(flySpeed)
+end
+
+flyMinus.MouseButton1Click:Connect(function() updateFlySpeed(flySpeed - 1) end)
+flyPlus.MouseButton1Click:Connect(function() updateFlySpeed(flySpeed + 1) end)
+flySpeedBox.FocusLost:Connect(function() updateFlySpeed(flySpeedBox.Text) end)
+
+local function stopFly()
+	flyEnabled = false
+	if flyBodyVelocity then flyBodyVelocity:Destroy() flyBodyVelocity = nil end
+	if flyBodyGyro then flyBodyGyro:Destroy() flyBodyGyro = nil end
+	flyCurrentSpeed = 0
+	flyCharacter = nil
+	flyHumanoid = nil
+	flyRoot = nil
+
+	local character = player.Character
+	if character then
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.PlatformStand = false
+			for _, state in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
+				pcall(function() humanoid:SetStateEnabled(state, true) end)
+			end
+			pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.RunningNoPhysics) end)
+		end
+		local animate = character:FindFirstChild("Animate")
+		if animate then animate.Disabled = false end
+	end
+
+	flyEnableButton.Text = "Enable Fly"
+	setToggleOff(flyEnableButton, flyEnableIndicator)
+	setToggleOff(flyButton, flyIndicator)
+end
+
+local function startFly()
+	local character = player.Character
+	if not character then return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not root then return end
+
+	stopFly()
+	flyEnabled = true
+	flyCharacter = character
+	flyHumanoid = humanoid
+	flyRoot = root
+
+	flyBodyGyro = Instance.new("BodyGyro")
+	flyBodyGyro.P = 90000
+	flyBodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+	flyBodyGyro.CFrame = root.CFrame
+	flyBodyGyro.Parent = root
+
+	flyBodyVelocity = Instance.new("BodyVelocity")
+	flyBodyVelocity.Velocity = Vector3.new(0, 0.1, 0)
+	flyBodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+	flyBodyVelocity.Parent = root
+
+	humanoid.PlatformStand = true
+	local animate = character:FindFirstChild("Animate")
+	if animate then animate.Disabled = true end
+
+	for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
+		pcall(function() track:AdjustSpeed(0) end)
+	end
+
+	for _, state in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
+		pcall(function() humanoid:SetStateEnabled(state, false) end)
+	end
+	pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Swimming) end)
+
+	flyEnableButton.Text = "Disable Fly"
+	setToggleOn(flyEnableButton, flyEnableIndicator)
+	setToggleOn(flyButton, flyIndicator)
+end
+
+flyEnableButton.MouseButton1Click:Connect(function()
+	if flyEnabled then stopFly() else startFly() end
+end)
+
+flyButton.MouseButton1Click:Connect(function()
+	flyPanelOpen = not flyPanelOpen
+	flyPanel.Visible = flyPanelOpen
+	if flyPanelOpen then
+		flyButton.BackgroundColor3 = Color3.fromRGB(45, 47, 56)
+	else
+		if flyEnabled then setToggleOn(flyButton, flyIndicator) else setToggleOff(flyButton, flyIndicator) end
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.KeyCode == Enum.KeyCode.W then flyControls.f = 1
+	elseif input.KeyCode == Enum.KeyCode.S then flyControls.b = -1
+	elseif input.KeyCode == Enum.KeyCode.A then flyControls.l = -1
+	elseif input.KeyCode == Enum.KeyCode.D then flyControls.r = 1
+	elseif input.KeyCode == Enum.KeyCode.Space then flyControls.up = 1
+	elseif input.KeyCode == Enum.KeyCode.LeftControl then flyControls.down = -1
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.W then flyControls.f = 0
+	elseif input.KeyCode == Enum.KeyCode.S then flyControls.b = 0
+	elseif input.KeyCode == Enum.KeyCode.A then flyControls.l = 0
+	elseif input.KeyCode == Enum.KeyCode.D then flyControls.r = 0
+	elseif input.KeyCode == Enum.KeyCode.Space then flyControls.up = 0
+	elseif input.KeyCode == Enum.KeyCode.LeftControl then flyControls.down = 0
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if not flyEnabled or not flyBodyVelocity or not flyBodyGyro then return end
+	local character = player.Character
+	if not character then stopFly() return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local camera = workspace.CurrentCamera
+	if not humanoid or not root or not camera then return end
+
+	local mobileMove = humanoid.MoveDirection
+	local look = camera.CFrame.LookVector
+	local right = camera.CFrame.RightVector
+	local up = Vector3.new(0, 1, 0)
+
+	local keyboardForward = flyControls.f + flyControls.b
+	local keyboardRight = flyControls.l + flyControls.r
+	local keyboardVertical = flyControls.up + flyControls.down
+
+	local horizontalLook = Vector3.new(look.X, 0, look.Z)
+	local horizontalRight = Vector3.new(right.X, 0, right.Z)
+	if horizontalLook.Magnitude > 0 then horizontalLook = horizontalLook.Unit end
+	if horizontalRight.Magnitude > 0 then horizontalRight = horizontalRight.Unit end
+
+	local mobileForward, mobileRight = 0, 0
+	if mobileMove.Magnitude > 0 then
+		mobileForward = mobileMove:Dot(horizontalLook)
+		mobileRight = mobileMove:Dot(horizontalRight)
+	end
+
+	local forward = math.clamp(keyboardForward + mobileForward, -1, 1)
+	local rightAmount = math.clamp(keyboardRight + mobileRight, -1, 1)
+	local vertical = math.clamp(keyboardVertical, -1, 1)
+	local moving = math.abs(forward) > 0.01 or math.abs(rightAmount) > 0.01 or math.abs(vertical) > 0.01
+
+	if moving then
+		flyCurrentSpeed = flyCurrentSpeed + 0.5 + (flyCurrentSpeed / math.max(flyMaxSpeed, 1))
+		if flyCurrentSpeed > flyMaxSpeed then flyCurrentSpeed = flyMaxSpeed end
+	else
+		if flyCurrentSpeed ~= 0 then
+			flyCurrentSpeed = flyCurrentSpeed - 1
+			if flyCurrentSpeed < 0 then flyCurrentSpeed = 0 end
+		end
+	end
+
+	local direction = look * forward + right * rightAmount + up * vertical
+	if direction.Magnitude > 0 then
+		direction = direction.Unit
+		flyBodyVelocity.Velocity = direction * flyCurrentSpeed
+		lastFlyControls.f = forward
+		lastFlyControls.b = 0
+		lastFlyControls.l = rightAmount
+		lastFlyControls.r = 0
+		lastFlyControls.up = vertical
+		lastFlyControls.down = 0
+	elseif flyCurrentSpeed ~= 0 then
+		local lastDirection = look * (lastFlyControls.f + lastFlyControls.b) + right * (lastFlyControls.l + lastFlyControls.r) + up * (lastFlyControls.up + lastFlyControls.down)
+		if lastDirection.Magnitude > 0 then
+			flyBodyVelocity.Velocity = lastDirection.Unit * flyCurrentSpeed
+		else
+			flyBodyVelocity.Velocity = Vector3.zero
+		end
+	else
+		flyBodyVelocity.Velocity = Vector3.zero
+	end
+
+	flyBodyGyro.CFrame = camera.CFrame * CFrame.Angles(-math.rad(forward * 50 * flyCurrentSpeed / math.max(flyMaxSpeed, 1)), 0, 0)
+	humanoid.PlatformStand = true
+end)
+
+flyUp.MouseButton1Down:Connect(function() flyControls.up = 1 end)
+flyUp.MouseButton1Up:Connect(function() flyControls.up = 0 end)
+flyDown.MouseButton1Down:Connect(function() flyControls.down = -1 end)
+flyDown.MouseButton1Up:Connect(function() flyControls.down = 0 end)
+
+local infinityJumpButton, infinityJumpIndicator = createToggle("InfinityJump", "Infinity Jump")
+
+infinityJumpButton.MouseButton1Click:Connect(function()
+	infinityJump = not infinityJump
+	if infinityJump then setToggleOn(infinityJumpButton, infinityJumpIndicator) else setToggleOff(infinityJumpButton, infinityJumpIndicator) end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+	if not infinityJump then return end
+	local character = player.Character
+	if not character then return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end
+end)
+
+local flingThirdPartyButton, flingThirdPartyIndicator = createToggle("FlingOnTouch", "Fling 3rd party")
+
+flingThirdPartyButton.MouseButton1Click:Connect(function()
+	flingThirdParty = not flingThirdParty
+	if flingThirdParty then
+		flingThirdPartyButton.BackgroundColor3 = Color3.fromRGB(70, 45, 35)
+		flingThirdPartyIndicator.BackgroundColor3 = Color3.fromRGB(230, 100, 55)
+		local success = pcall(function()
+			loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Ultimate-Fling-GUI-41909"))()
+		end)
+		if not success then sendNotification("MM2 Menu", "Failed to load 3rd party fling script.") end
+	else
+		setToggleOff(flingThirdPartyButton, flingThirdPartyIndicator)
+	end
+end)
+
+local function flingOnTouchLoop()
+	local lp = player
+	local c, hrp, vel, movel = nil, nil, nil, 0.1
+	while flingTouchActive do
+		RunService.Heartbeat:Wait()
+		c = lp.Character
+		hrp = c and c:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			vel = hrp.Velocity
+			hrp.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
+			RunService.RenderStepped:Wait()
+			hrp.Velocity = vel
+			RunService.Stepped:Wait()
+			hrp.Velocity = vel + Vector3.new(0, movel, 0)
+			movel = -movel
+		end
+	end
+end
+
+local flingOnTouchButton, flingOnTouchIndicator = createToggle("FlingOnTouchIntegrated", "Fling On Touch")
+
+flingOnTouchButton.MouseButton1Click:Connect(function()
+	flingOnTouch = not flingOnTouch
+	if flingOnTouch then
+		flingOnTouchButton.BackgroundColor3 = Color3.fromRGB(70, 45, 35)
+		flingOnTouchIndicator.BackgroundColor3 = Color3.fromRGB(230, 100, 55)
+		flingTouchActive = true
+		flingTouchThread = coroutine.create(flingOnTouchLoop)
+		coroutine.resume(flingTouchThread)
+	else
+		setToggleOff(flingOnTouchButton, flingOnTouchIndicator)
+		flingTouchActive = false
+	end
+end)
+
+local speedhackButton, speedhackIndicator = createToggle("Speedhack", "Speedhack")
+
+local speedhackRow = Instance.new("Frame")
+speedhackRow.Name = "SpeedhackRow"
+speedhackRow.Size = UDim2.new(1, 0, 0, 32)
+speedhackRow.BackgroundTransparency = 1
+speedhackRow.LayoutOrder = getLayoutOrder()
+speedhackRow.Parent = content
+
+local speedhackMinus = Instance.new("TextButton")
+speedhackMinus.Size = UDim2.fromOffset(36, 32)
+speedhackMinus.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+speedhackMinus.BorderSizePixel = 0
+speedhackMinus.Text = "-"
+speedhackMinus.TextColor3 = Color3.fromRGB(235, 235, 240)
+speedhackMinus.TextSize = 18
+speedhackMinus.Font = Enum.Font.GothamBold
+speedhackMinus.AutoButtonColor = false
+speedhackMinus.Parent = speedhackRow
+
+local speedhackBox = Instance.new("TextBox")
+speedhackBox.Size = UDim2.fromOffset(50, 32)
+speedhackBox.Position = UDim2.fromOffset(42, 0)
+speedhackBox.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+speedhackBox.BorderSizePixel = 0
+speedhackBox.Text = "16"
+speedhackBox.TextColor3 = Color3.fromRGB(235, 235, 240)
+speedhackBox.TextSize = 12
+speedhackBox.Font = Enum.Font.GothamSemibold
+speedhackBox.ClearTextOnFocus = false
+speedhackBox.Parent = speedhackRow
+
+local speedhackPlus = Instance.new("TextButton")
+speedhackPlus.Size = UDim2.fromOffset(36, 32)
+speedhackPlus.Position = UDim2.fromOffset(100, 0)
+speedhackPlus.BackgroundColor3 = Color3.fromRGB(34, 36, 43)
+speedhackPlus.BorderSizePixel = 0
+speedhackPlus.Text = "+"
+speedhackPlus.TextColor3 = Color3.fromRGB(235, 235, 240)
+speedhackPlus.TextSize = 18
+speedhackPlus.Font = Enum.Font.GothamBold
+speedhackPlus.AutoButtonColor = false
+speedhackPlus.Parent = speedhackRow
+
+local speedhackValueLabel = Instance.new("TextLabel")
+speedhackValueLabel.Size = UDim2.new(1, -145, 0, 32)
+speedhackValueLabel.Position = UDim2.fromOffset(145, 0)
+speedhackValueLabel.BackgroundTransparency = 1
+speedhackValueLabel.Text = "WalkSpeed"
+speedhackValueLabel.TextColor3 = Color3.fromRGB(150, 153, 165)
+speedhackValueLabel.TextSize = 11
+speedhackValueLabel.Font = Enum.Font.GothamBold
+speedhackValueLabel.TextXAlignment = Enum.TextXAlignment.Left
+speedhackValueLabel.Parent = speedhackRow
+
+local function updateSpeedhack(value)
+	value = tonumber(value)
+	if not value then value = speedhackSpeed end
+	value = math.clamp(math.floor(value), 1, 500)
+	speedhackSpeed = value
+	speedhackBox.Text = tostring(speedhackSpeed)
+end
+
+speedhackMinus.MouseButton1Click:Connect(function() updateSpeedhack(speedhackSpeed - 1) end)
+speedhackPlus.MouseButton1Click:Connect(function() updateSpeedhack(speedhackSpeed + 1) end)
+speedhackBox.FocusLost:Connect(function() updateSpeedhack(speedhackBox.Text) end)
+
+speedhackButton.MouseButton1Click:Connect(function()
+	speedhackEnabled = not speedhackEnabled
+	if speedhackEnabled then
+		setToggleOn(speedhackButton, speedhackIndicator)
+		local character = player.Character
+		if character then
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if humanoid then humanoid.WalkSpeed = speedhackSpeed end
+		end
+	else
+		setToggleOff(speedhackButton, speedhackIndicator)
+		local character = player.Character
+		if character then
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if humanoid then humanoid.WalkSpeed = 16 end
+		end
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if not speedhackEnabled then return end
+	local character = player.Character
+	if not character then return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then humanoid.WalkSpeed = speedhackSpeed end
+end)
+
+--==================================================
+-- ROLE ESP
+--==================================================
+
+createSectionTitle("ROLE ESP SETTINGS")
+
+local espButtons = {}
+
+local function createESPButton(role)
+	local button, indicator = createToggle(role .. "ESP", role .. " ESP")
+	espButtons[role] = { Button = button, Indicator = indicator }
+	button.MouseButton1Click:Connect(function()
+		espEnabled[role] = not espEnabled[role]
+		if espEnabled[role] then
+			button.BackgroundColor3 = ROLE_COLORS[role]:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+			indicator.BackgroundColor3 = ROLE_COLORS[role]
+		else
+			setToggleOff(button, indicator)
+		end
+	end)
+end
+
+createESPButton("Innocent")
+createESPButton("Murderer")
+createESPButton("Sheriff")
+createESPButton("Hero")
+
+--==================================================
+-- ITEM ESP (Gun)
+--==================================================
+
+createSectionTitle("ITEM ESP SETTINGS")
+
+local gunESPButton, gunESPIndicator = createToggle("GunESP", "Gun ESP")
+
+gunESPButton.MouseButton1Click:Connect(function()
+	gunESPEnabled = not gunESPEnabled
+	if gunESPEnabled then
+		gunESPButton.BackgroundColor3 = GUN_COLOR:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+		gunESPIndicator.BackgroundColor3 = GUN_COLOR
+	else
+		setToggleOff(gunESPButton, gunESPIndicator)
+	end
+end)
+
+--==================================================
+-- NOTIFIER
+--==================================================
+
+createSectionTitle("NOTIFIER SETTINGS")
+
+local function getFormattedRoleText(roleName, userName)
+	if not userName then return roleName .. ": None" end
+	local targetPlayer = Players:FindFirstChild(userName)
+	if targetPlayer then
+		return roleName .. ": " .. targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
+	end
+	return roleName .. ": " .. userName
+end
+
+local function notifyAllRoles()
+	local mText = getFormattedRoleText("Murderer", MurdererName)
+	local sText = getFormattedRoleText("Sheriff", SheriffName)
+	local hText = getFormattedRoleText("Hero", HeroName)
+	sendNotification("MM2 Roles", mText .. "\n" .. sText .. "\n" .. hText)
+end
+
+local notifyRolesButton = createActionButton("NotifyRoles", "Notify Roles")
+notifyRolesButton.MouseButton1Click:Connect(function() notifyAllRoles() end)
+
+local autoNotifyButton, autoNotifyIndicator = createToggle("AutoNotifyRound", "Auto Notify Round")
+
+autoNotifyButton.MouseButton1Click:Connect(function()
+	autoNotifyRoles = not autoNotifyRoles
+	if autoNotifyRoles then setToggleOn(autoNotifyButton, autoNotifyIndicator) else setToggleOff(autoNotifyButton, autoNotifyIndicator) end
+end)
+
+local autoMurdererChatButton, autoMurdererChatIndicator = createToggle("AutoMurdererChat", "Auto Send Murderer In Chat")
+
+autoMurdererChatButton.MouseButton1Click:Connect(function()
+	autoSendMurdererChat = not autoSendMurdererChat
+	if autoSendMurdererChat then
+		setToggleOn(autoMurdererChatButton, autoMurdererChatIndicator)
+		lastChatSentMurderer = nil
+		roundActive = false
+	else
+		setToggleOff(autoMurdererChatButton, autoMurdererChatIndicator)
+		lastChatSentMurderer = nil
+		roundActive = false
+	end
+end)
+
 --==================================================
 -- SPAWN & LOBBY PROTECTION
 --==================================================
