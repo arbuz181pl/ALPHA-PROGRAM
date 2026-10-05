@@ -37,7 +37,8 @@ local S = {
     killerTrailOn = false, sheriffTrailOn = false, heroTrailOn = false,
     cameraFollowMurderer = false,
     killSoundOn = false, autoPlayOn = false,
-    autoFarmOn = false, autoFarmDeaths = 0, autoFarmRespawnConn = nil,
+    autoFarmOn = false, autoFarmDeaths = 0,
+    autoFarmBagFullNotified = false,
     lastKnownMurderer = nil,
     flySpeed = 50, speedhackEnabled = false, speedhackSpeed = 45,
     guiLocked = false, flyPanelLocked = false, minimized = false, menuVisible = true,
@@ -53,7 +54,7 @@ local S = {
     pendingNotify = false, pendingNotifySince = 0,
     capturingKeybind = false, capturingAction = nil,
     reopenDragDist = 0, hopping = false,
-    autoPlayLastRun = 0,
+    autoPlayLastRun = 0, lastCoinTP = 0,
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
         infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
@@ -1888,7 +1889,7 @@ local function resetAllToggles()
     if S.autoFarmOn then
         S.autoFarmOn = false
         setOff(U.autoFarmBtn, U.autoFarmInd)
-        S.autoFarmDeaths = 0
+        S.autoFarmBagFullNotified = false
     end
     if S.notifyRoundStart then S.notifyRoundStart = false setOff(U.rStartBtn, U.rStartInd) end
     if S.notifyRoundEnd then S.notifyRoundEnd = false setOff(U.rEndBtn, U.rEndInd) end
@@ -1936,6 +1937,76 @@ do
     U.crosshairDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     U.crosshairDot.BorderSizePixel = 0
     U.crosshairDot.Parent = S.crosshairGui
+end
+
+-- ============================================================
+-- COIN FARM SYSTEM
+-- ============================================================
+local function getCoinContainer()
+    for _, model in ipairs(workspace:GetChildren()) do
+        local cc = model:FindFirstChild("CoinContainer")
+        if cc then return cc end
+    end
+    return nil
+end
+
+local function getNearestCoin(myRoot, container)
+    local nearest = nil
+    local nearestDist = math.huge
+    for _, coin in ipairs(container:GetChildren()) do
+        if coin:IsA("BasePart") and coin.Parent then
+            local dist = (coin.Position - myRoot.Position).Magnitude
+            if dist < nearestDist then
+                nearestDist = dist
+                nearest = coin
+            end
+        end
+    end
+    return nearest
+end
+
+local function isBagFull()
+    local pg = player:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    local mainGui = pg:FindFirstChild("MainGUI")
+    if not mainGui then return false end
+    local gameFrame = mainGui:FindFirstChild("Game")
+    if not gameFrame then return false end
+    local bag = gameFrame:FindFirstChild("CashBag")
+    if not bag then return false end
+    return not bag:FindFirstChild("Coins") and not bag:FindFirstChild("Elite")
+end
+
+local function autoFarmCoins()
+    if not S.autoFarmOn then return end
+    local now = tick()
+    if now - S.lastCoinTP < 0.35 then return end
+    S.lastCoinTP = now
+
+    local c = player.Character
+    if not c then return end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    if isPlayerInSpawn(player) then return end
+
+    if isBagFull() then
+        if not S.autoFarmBagFullNotified then
+            S.autoFarmBagFullNotified = true
+            sendNotification("Auto Farm", "Bag is full — waiting for next round", SOUNDS.notify)
+        end
+        return
+    end
+    S.autoFarmBagFullNotified = false
+
+    local container = getCoinContainer()
+    if not container then return end
+
+    local coin = getNearestCoin(hrp, container)
+    if coin then
+        hrp.CFrame = CFrame.new(coin.Position + Vector3.new(0, 2, 0))
+        hrp.Velocity = Vector3.zero
+    end
 end
 
 -- ============================================================
@@ -2008,11 +2079,11 @@ U.pvpPresetBtn = createActionButton("PvpPreset", "Apply PVP Ready")
 U.pvpPresetBtn.BackgroundColor3 = Color3.fromRGB(45, 65, 45)
 U.pvpPresetBtn.MouseButton1Click:Connect(applyPvpPreset)
 
-createSectionTitle("AUTO FARM")
+createSectionTitle("COIN FARM")
 local afInfo = Instance.new("TextLabel")
 afInfo.Size = UDim2.new(1, 0, 0, 60)
 afInfo.BackgroundTransparency = 1
-afInfo.Text = "Auto Farm forces Auto Play + Anti AFK ON and auto-respawns you on death."
+afInfo.Text = "Auto Farm teleports to coins. Forces Anti AFK on so you don't get kicked while farming."
 afInfo.TextColor3 = Color3.fromRGB(150, 153, 165)
 afInfo.TextSize = 11
 afInfo.Font = Enum.Font.Gotham
@@ -2021,19 +2092,12 @@ afInfo.TextYAlignment = Enum.TextYAlignment.Top
 afInfo.LayoutOrder = getLayoutOrder()
 afInfo.Parent = currentParent
 
-U.autoFarmBtn, U.autoFarmInd = createToggle("AutoFarm", "Auto Farm")
+U.autoFarmBtn, U.autoFarmInd = createToggle("AutoFarm", "Auto Farm (Coins)")
 U.autoFarmBtn.MouseButton1Click:Connect(function()
     S.autoFarmOn = not S.autoFarmOn
     if S.autoFarmOn then
         setOn(U.autoFarmBtn, U.autoFarmInd)
 
-        -- Force Auto Play ON
-        if not S.autoPlayOn then
-            S.autoPlayOn = true
-            setOn(U.autoPlayBtn, U.autoPlayInd)
-        end
-
-        -- Force Anti AFK ON
         if not S.antiAfkEnabled then
             S.antiAfkEnabled = true
             setOn(U.afkBtn, U.afkInd)
@@ -2045,8 +2109,8 @@ U.autoFarmBtn.MouseButton1Click:Connect(function()
             end)
         end
 
-        S.autoFarmDeaths = 0
-        sendNotification("MM2 Menu", "Auto Farm ON", SOUNDS.success)
+        S.autoFarmBagFullNotified = false
+        sendNotification("MM2 Menu", "Auto Farm ON — collecting coins", SOUNDS.success)
     else
         setOff(U.autoFarmBtn, U.autoFarmInd)
         sendNotification("MM2 Menu", "Auto Farm OFF")
@@ -2476,7 +2540,6 @@ local function checkAutoChat()
     end
 end
 
--- Auto Play logic
 local function runAutoPlay()
     if not S.autoPlayOn then return end
     local now = tick()
@@ -2503,44 +2566,6 @@ local function runAutoPlay()
             end
         end
     end
-end
-
--- Auto Farm: auto-respawn on death
-local function hookAutoFarm()
-    if S.autoFarmRespawnConn then S.autoFarmRespawnConn:Disconnect() S.autoFarmRespawnConn = nil end
-    local c = player.Character
-    if not c then return end
-    local h = c:FindFirstChildOfClass("Humanoid")
-    if not h then return end
-    local conn
-    conn = h.Died:Connect(function()
-        if not S.autoFarmOn then return end
-        S.autoFarmDeaths = S.autoFarmDeaths + 1
-        task.wait(2)
-        -- Look for a respawn button in PlayerGui (MM2 has one after death)
-        local pg = player:FindFirstChild("PlayerGui")
-        if pg then
-            for _, desc in ipairs(pg:GetDescendants()) do
-                if desc:IsA("TextButton") or desc:IsA("ImageButton") then
-                    local txt = (desc.Text or ""):lower()
-                    if txt:find("respawn") or txt:find("play again") or txt:find("continue") then
-                        pcall(function() desc:Activate() end)
-                        break
-                    end
-                end
-            end
-        end
-        -- Also poke the PlayerGui in case the button isn't found
-        if S.autoFarmDeaths >= 3 then
-            S.autoFarmDeaths = 0
-            sendNotification("Auto Farm", "Rejoining to keep farming...", SOUNDS.notify)
-            task.wait(1)
-            pcall(function()
-                TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
-            end)
-        end
-    end)
-    S.autoFarmRespawnConn = conn
 end
 
 RunService.Heartbeat:Connect(function()
@@ -2697,7 +2722,6 @@ player.CharacterAdded:Connect(function(character)
         if S.speedhackEnabled then h.WalkSpeed = S.speedhackSpeed end
     end
     updateHL()
-    if S.autoFarmOn then hookAutoFarm() end
 end)
 
 -- ============================================================
@@ -2789,7 +2813,6 @@ local function closeScript()
     for _, t in ipairs(Players:GetPlayers()) do
         pcall(clearTrail, t)
     end
-    if S.autoFarmRespawnConn then S.autoFarmRespawnConn:Disconnect() S.autoFarmRespawnConn = nil end
     S.scriptClosed = true
     sendNotification("MM2 Menu", "Script closed.")
     pcall(function() U.gui:Destroy() end)
@@ -2978,7 +3001,6 @@ end)
 getRoles()
 updateHL()
 updateGunESP()
-if S.autoFarmOn then hookAutoFarm() end
 task.spawn(function()
     while U.gui.Parent do
         pcall(function()
@@ -2990,6 +3012,7 @@ task.spawn(function()
             if S.autoKillAll and MurdererName == player.Name then killAllPlayers() end
             if S.autoGunTP then autoTPGunTop() end
             if S.autoPlayOn then pcall(runAutoPlay) end
+            if S.autoFarmOn then pcall(autoFarmCoins) end
             checkAutoChat()
         end)
         task.wait(0.25)
