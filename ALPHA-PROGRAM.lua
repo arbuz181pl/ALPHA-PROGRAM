@@ -39,7 +39,6 @@ local S = {
     killSoundOn = false, autoPlayOn = false,
     autoFarmOn = false,
     autoFarmBagFullNotified = false,
-    currentFarmCoin = nil, currentCoinTPTime = 0,
     lastKnownMurderer = nil,
     flySpeed = 50, speedhackEnabled = false, speedhackSpeed = 45,
     guiLocked = false, flyPanelLocked = false, minimized = false, menuVisible = true,
@@ -60,6 +59,11 @@ local S = {
     lastBagFullNotified = 0,
     safeSpot = nil,
     BAG_FULL_THRESHOLD = 40,
+    -- Auto farm fast-mode state
+    recentCoins = {},
+    fleeUntil = 0,
+    FLEE_TRIGGER_DIST = 8,
+    FLEE_KEEP_DIST = 25,
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
         infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
@@ -104,7 +108,7 @@ local lastAutoGunTP = 0
 local currentLayoutOrder = 0
 local currentParent = nil
 
--- Gun-TP under-map anchor (used by Auto Gun TP and referenced by Anti-Void + Auto Farm)
+-- Gun-TP under-map anchor (used by Auto Gun TP, Auto Farm flee, and referenced by Anti-Void)
 local gunTpAnchor = nil
 
 local function playSound(id, vol)
@@ -387,7 +391,7 @@ end
 switchTab("Movement")
 
 -- ============================================================
--- SEARCH (also hides section titles during search)
+-- SEARCH
 -- ============================================================
 U.searchBox:GetPropertyChangedSignal("Text"):Connect(function()
     local q = U.searchBox.Text:lower()
@@ -1494,7 +1498,6 @@ local function tpGunAndBack()
     return true
 end
 
--- Get Y of a spot safely under the map (never below void threshold)
 local function getSafeUnderMapY()
     local lowest = math.huge
     for _, obj in ipairs(workspace:GetChildren()) do
@@ -1515,6 +1518,25 @@ local function getSafeUnderMapY()
     return candidate
 end
 
+-- Teleport under-map and anchor player there (used by auto-gun + flee)
+local function anchorUnderMap(hrp)
+    if not hrp then return end
+    local safeY = getSafeUnderMapY()
+    local x, z = hrp.Position.X, hrp.Position.Z
+    hrp.CFrame = CFrame.new(x, safeY, z)
+    hrp.Velocity = Vector3.zero
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+
+    if gunTpAnchor then gunTpAnchor:Destroy() end
+    gunTpAnchor = Instance.new("BodyPosition")
+    gunTpAnchor.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    gunTpAnchor.P = 100000
+    gunTpAnchor.D = 5000
+    gunTpAnchor.Position = Vector3.new(x, safeY, z)
+    gunTpAnchor.Parent = hrp
+end
+
 local function autoTPGunTop()
     local now = tick()
     if now - lastAutoGunTP < 3 then return end
@@ -1527,25 +1549,9 @@ local function autoTPGunTop()
     if not tp then return end
     lastAutoGunTP = now
 
-    -- Step 1: touch gun to pick it up
     mr.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
     task.wait(0.3)
-
-    -- Step 2: teleport under map and anchor there so we don't fall into void
-    local safeY = getSafeUnderMapY()
-    local x, z = mr.Position.X, mr.Position.Z
-    mr.CFrame = CFrame.new(x, safeY, z)
-    mr.Velocity = Vector3.zero
-    mr.AssemblyLinearVelocity = Vector3.zero
-    mr.AssemblyAngularVelocity = Vector3.zero
-
-    if gunTpAnchor then gunTpAnchor:Destroy() end
-    gunTpAnchor = Instance.new("BodyPosition")
-    gunTpAnchor.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-    gunTpAnchor.P = 100000
-    gunTpAnchor.D = 5000
-    gunTpAnchor.Position = Vector3.new(x, safeY, z)
-    gunTpAnchor.Parent = mr
+    anchorUnderMap(mr)
 end
 
 U.autoGunBtn, U.autoGunInd = createToggle("AutoGunTP", "Auto Teleport To Gun (Hide Under Map)")
@@ -1966,9 +1972,11 @@ local function resetAllToggles(silent)
         S.autoFarmOn = false
         setOff(U.autoFarmBtn, U.autoFarmInd)
         S.autoFarmBagFullNotified = false
-        S.currentFarmCoin = nil
         S.postBagActionDone = false
         S.safeSpot = nil
+        S.fleeUntil = 0
+        S.recentCoins = {}
+        if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
     end
     if S.notifyRoundStart then S.notifyRoundStart = false setOff(U.rStartBtn, U.rStartInd) end
     if S.notifyRoundEnd then S.notifyRoundEnd = false setOff(U.rEndBtn, U.rEndInd) end
@@ -2021,7 +2029,7 @@ do
 end
 
 -- ============================================================
--- COIN FARM SYSTEM (post-bag role action merged)
+-- COIN FARM SYSTEM
 -- ============================================================
 local function getCoinContainer()
     for _, model in ipairs(workspace:GetChildren()) do
@@ -2029,21 +2037,6 @@ local function getCoinContainer()
         if cc then return cc end
     end
     return nil
-end
-
-local function getNearestCoin(myRoot, container)
-    local nearest = nil
-    local nearestDist = math.huge
-    for _, coin in ipairs(container:GetChildren()) do
-        if coin:IsA("BasePart") and coin.Parent then
-            local dist = (coin.Position - myRoot.Position).Magnitude
-            if dist < nearestDist then
-                nearestDist = dist
-                nearest = coin
-            end
-        end
-    end
-    return nearest
 end
 
 local function getBagCoinCount()
@@ -2154,8 +2147,8 @@ local function runPostBagAction()
     if isSheriff then
         if MurdererName then
             sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — Sheriff: shooting murderer", SOUNDS.success)
-            local ok = pcall(shootMurderer)
-            if ok then S.postBagActionDone = true end
+            local ok, killed = pcall(shootMurderer)
+            if ok and killed then S.postBagActionDone = true end
         else
             sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — no murderer, going safe", SOUNDS.notify)
             goToSafeSpot()
@@ -2167,8 +2160,8 @@ local function runPostBagAction()
     if tryGrabDroppedGun() then
         sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — grabbed gun, shooting murderer", SOUNDS.success)
         task.wait(0.3)
-        local ok = pcall(shootMurderer)
-        S.postBagActionDone = ok
+        local ok, killed = pcall(shootMurderer)
+        S.postBagActionDone = (ok and killed) or false
     else
         sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — no gun, teleporting to safe spot", SOUNDS.notify)
         goToSafeSpot()
@@ -2176,8 +2169,12 @@ local function runPostBagAction()
     end
 end
 
+-- Fast auto farm: gets called every ~0.05s from its own loop.
 local function autoFarmCoins()
     if not S.autoFarmOn then return end
+
+    -- Flee mode: murderer nearby, stay hidden and skip farming
+    if tick() < S.fleeUntil then return end
 
     local c = player.Character
     if not c then return end
@@ -2200,27 +2197,88 @@ local function autoFarmCoins()
     local container = getCoinContainer()
     if not container then return end
 
-    -- If already targeted a coin, wait until it despawns before picking another.
-    -- 2.5s timeout in case the server is slow to remove it.
-    if S.currentFarmCoin then
-        if S.currentFarmCoin.Parent and (tick() - S.currentCoinTPTime) < 2.5 then
-            return
-        end
-        S.currentFarmCoin = nil
-    end
-
-    -- Release auto-gun safe anchor so we can move freely
+    -- Release any leftover under-map anchor before farming
     if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
 
-    local coin = getNearestCoin(hrp, container)
-    if not coin then return end
+    -- Clean up old recently-visited coin entries
+    local now = tick()
+    for coin, t in pairs(S.recentCoins) do
+        if now - t > 2 or not coin or not coin.Parent then
+            S.recentCoins[coin] = nil
+        end
+    end
 
-    S.currentFarmCoin = coin
-    S.currentCoinTPTime = tick()
-    hrp.CFrame = CFrame.new(coin.Position + Vector3.new(0, 2, 0))
+    -- Murderer XZ position for coin filtering
+    local mXZ = nil
+    if MurdererName and MurdererName ~= player.Name then
+        local m = Players:FindFirstChild(MurdererName)
+        if m and m.Character then
+            local mr = m.Character:FindFirstChild("HumanoidRootPart")
+            if mr then mXZ = Vector2.new(mr.Position.X, mr.Position.Z) end
+        end
+    end
+
+    -- Find nearest coin we haven't visited recently and that's not next to murderer
+    local nearest = nil
+    local nearestDist = math.huge
+    for _, coin in ipairs(container:GetChildren()) do
+        if coin:IsA("BasePart") and coin.Parent and not S.recentCoins[coin] then
+            local coinXZ = Vector2.new(coin.Position.X, coin.Position.Z)
+            local safeFromM = true
+            if mXZ and (coinXZ - mXZ).Magnitude < 30 then safeFromM = false end
+            if safeFromM then
+                local dist = (coin.Position - hrp.Position).Magnitude
+                if dist < nearestDist then
+                    nearestDist = dist
+                    nearest = coin
+                end
+            end
+        end
+    end
+
+    if not nearest then return end
+
+    S.recentCoins[nearest] = now
+    hrp.CFrame = CFrame.new(nearest.Position + Vector3.new(0, 2, 0))
     hrp.Velocity = Vector3.zero
     hrp.AssemblyLinearVelocity = Vector3.zero
 end
+
+-- Flee check heartbeat: fires faster than the farm loop and reacts instantly.
+RunService.Heartbeat:Connect(function()
+    if S.scriptClosed then return end
+    if not S.autoFarmOn then return end
+
+    local c = player.Character
+    if not c then return end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return end
+
+    -- Only flee from murderer (if we ARE murderer, don't flee from ourselves)
+    if not MurdererName or MurdererName == player.Name then return end
+    local m = Players:FindFirstChild(MurdererName)
+    if not m or not m.Character then return end
+    local mr = m.Character:FindFirstChild("HumanoidRootPart")
+    if not mr then return end
+
+    -- Use XZ distance so Y offset from being under map doesn't matter
+    local hrpXZ = Vector2.new(hrp.Position.X, hrp.Position.Z)
+    local mrXZ = Vector2.new(mr.Position.X, mr.Position.Z)
+    local distXZ = (hrpXZ - mrXZ).Magnitude
+
+    -- Extend flee while murderer is still close (XZ)
+    if S.fleeUntil > tick() and distXZ < S.FLEE_KEEP_DIST then
+        S.fleeUntil = math.max(S.fleeUntil, tick() + 0.5)
+    end
+
+    -- Trigger fresh flee
+    if distXZ <= S.FLEE_TRIGGER_DIST and tick() >= S.fleeUntil then
+        S.fleeUntil = tick() + 1.5
+        anchorUnderMap(hrp)
+        sendNotification("Auto Farm", "Murderer within " .. math.floor(distXZ) .. " studs — hiding!", SOUNDS.alert)
+    end
+end)
 
 -- ============================================================
 -- CONFIG TAB
@@ -2294,9 +2352,9 @@ U.pvpPresetBtn.MouseButton1Click:Connect(applyPvpPreset)
 
 createSectionTitle("COIN FARM")
 local afInfo = Instance.new("TextLabel")
-afInfo.Size = UDim2.new(1, 0, 0, 90)
+afInfo.Size = UDim2.new(1, 0, 0, 110)
 afInfo.BackgroundTransparency = 1
-afInfo.Text = "Auto Farm teleports to coins and forces Anti AFK on.\nWhen your bag hits 40 coins it automatically does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab dropped gun & shoot, else hide at safe spot"
+afInfo.Text = "Auto Farm teleports to coins and forces Anti AFK on.\nWhen your bag hits 40 coins it automatically does a role action:\n• Murderer → kill all\n• Sheriff → shoot murderer\n• Innocent / Hero → grab dropped gun & shoot, else hide at safe spot\n\nIf the murderer gets within 8 studs while farming,\nyou instantly hide under the map until they leave."
 afInfo.TextColor3 = Color3.fromRGB(150, 153, 165)
 afInfo.TextSize = 11
 afInfo.Font = Enum.Font.Gotham
@@ -2323,15 +2381,18 @@ U.autoFarmBtn.MouseButton1Click:Connect(function()
         end
 
         S.autoFarmBagFullNotified = false
-        S.currentFarmCoin = nil
         S.postBagActionDone = false
         S.safeSpot = nil
+        S.fleeUntil = 0
+        S.recentCoins = {}
         sendNotification("MM2 Menu", "Auto Farm ON — collecting coins", SOUNDS.success)
     else
         setOff(U.autoFarmBtn, U.autoFarmInd)
-        S.currentFarmCoin = nil
         S.postBagActionDone = false
         S.safeSpot = nil
+        S.fleeUntil = 0
+        S.recentCoins = {}
+        if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
         sendNotification("MM2 Menu", "Auto Farm OFF")
     end
 end)
@@ -2472,6 +2533,8 @@ local function getRoles()
         S.postBagActionDone = false
         S.safeSpot = nil
         S.autoFarmBagFullNotified = false
+        S.fleeUntil = 0
+        S.recentCoins = {}
     end
 
     roundEvents()
@@ -2878,13 +2941,13 @@ RunService.Stepped:Connect(function()
 end)
 
 -- ============================================================
--- ANTI-VOID (earlier trigger + velocity pre-emptive rescue)
+-- ANTI-VOID (early trigger + velocity pre-emptive rescue)
 -- ============================================================
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.antiVoidEnabled or S.antiVoidCooldown then return end
     if S.flyEnabled then return end
-    -- Don't fight the auto-gun safe anchor
+    -- Don't fight the auto-gun / flee anchor
     if gunTpAnchor and gunTpAnchor.Parent then return end
 
     local c = player.Character
@@ -2955,9 +3018,10 @@ player.CharacterAdded:Connect(function(character)
     S.originalCollision = {}
     S.lastSafePosition = nil
     S.antiVoidCooldown = false
-    S.currentFarmCoin = nil
     S.postBagActionDone = false
     S.safeSpot = nil
+    S.fleeUntil = 0
+    S.recentCoins = {}
     if gunTpAnchor then gunTpAnchor:Destroy() gunTpAnchor = nil end
     if S.noclip then
         task.wait(0.1)
@@ -3234,10 +3298,22 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ============================================================
--- MAIN UPDATE LOOP
+-- AUTO FARM FAST LOOP (0.05s — 20Hz)
 -- ============================================================
 task.spawn(function()
-    while U.gui and U.gui.Parent do
+    while U.gui and U.gui.Parent and not S.scriptClosed do
+        if S.autoFarmOn then
+            pcall(autoFarmCoins)
+        end
+        task.wait(0.05)
+    end
+end)
+
+-- ============================================================
+-- MAIN UPDATE LOOP (0.1s — general checks)
+-- ============================================================
+task.spawn(function()
+    while U.gui and U.gui.Parent and not S.scriptClosed do
         pcall(function()
             if tick() - S.lastRoleCheck >= 0.25 then
                 S.lastRoleCheck = tick()
@@ -3249,11 +3325,10 @@ task.spawn(function()
             updateTrails()
             if S.autoKillAll and MurdererName == player.Name then killAllPlayers() end
             if S.autoGunTP then autoTPGunTop() end
-            if S.autoFarmOn then autoFarmCoins() end
             runAutoPlay()
             checkAutoChat()
         end)
-        task.wait(0.25)
+        task.wait(0.1)
     end
 end)
 
