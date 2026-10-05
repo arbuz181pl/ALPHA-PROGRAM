@@ -39,6 +39,7 @@ local S = {
     killSoundOn = false, autoPlayOn = false,
     autoFarmOn = false, autoFarmDeaths = 0,
     autoFarmBagFullNotified = false,
+    currentFarmCoin = nil, currentCoinTPTime = 0,
     lastKnownMurderer = nil,
     flySpeed = 50, speedhackEnabled = false, speedhackSpeed = 45,
     guiLocked = false, flyPanelLocked = false, minimized = false, menuVisible = true,
@@ -55,6 +56,12 @@ local S = {
     capturingKeybind = false, capturingAction = nil,
     reopenDragDist = 0, hopping = false,
     autoPlayLastRun = 0, lastCoinTP = 0,
+    -- Post bag full role actions
+    postBagActionOn = false,
+    postBagActionDone = false,
+    lastBagFullNotified = 0,
+    safeSpot = nil,
+    BAG_FULL_THRESHOLD = 40,
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
         infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
@@ -1274,36 +1281,56 @@ local function shootMurderer()
         return
     end
 
+    local c = player.Character
+    if not c then return end
+    local myRoot = c:FindFirstChild("HumanoidRootPart")
+    local humanoid = c:FindFirstChildOfClass("Humanoid")
+    if not myRoot or not humanoid then return end
+
     local gun = getGun()
     if not gun then
         sendNotification("MM2 Menu", "You do not have a Gun equipped!", SOUNDS.alert)
         return
     end
 
-    local c = player.Character
-    if not c then return end
-    local humanoid = c:FindFirstChildOfClass("Humanoid")
-    if humanoid and gun.Parent ~= c then
+    if gun.Parent ~= c then
         pcall(function() humanoid:EquipTool(gun) end)
-        task.wait(0.15)
+        task.wait(0.3)
     end
 
-    for attempt = 1, 3 do
+    for attempt = 1, 4 do
         local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-        local myRoot = c:FindFirstChild("HumanoidRootPart")
+        myRoot = c:FindFirstChild("HumanoidRootPart")
         if not targetRoot or not myRoot then break end
 
-        myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 2, 6)
-        task.wait(0.1)
+        local targetPos = targetRoot.Position
+        local standPos = targetPos + (targetRoot.CFrame.LookVector * 3) + Vector3.new(0, 2, 0)
+        myRoot.CFrame = CFrame.new(standPos, targetPos)
+        task.wait(0.08)
 
-        local sr = gun:FindFirstChild("Shoot")
-        if not sr then sr = ReplicatedStorage:FindFirstChild("Shoot", true) end
-        if sr and sr:IsA("RemoteEvent") then
-            pcall(function() sr:FireServer(targetRoot.CFrame, targetRoot.Position) end)
+        local fired = false
+        for _, name in ipairs({"Shoot", "Fire", "FireGun", "ShootGun", "ClientShoot"}) do
+            local sr = gun:FindFirstChild(name)
+            if sr and sr:IsA("RemoteEvent") then
+                pcall(function() sr:FireServer() end)
+                fired = true
+            end
         end
+
+        if not fired then
+            for _, name in ipairs({"Shoot", "Fire", "FireGun"}) do
+                local sr = ReplicatedStorage:FindFirstChild(name, true)
+                if sr and sr:IsA("RemoteEvent") then
+                    pcall(function() sr:FireServer() end)
+                    fired = true
+                    break
+                end
+            end
+        end
+
         pcall(function() gun:Activate() end)
 
-        task.wait(0.15)
+        task.wait(0.25)
 
         local h = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
         if not h or h.Health <= 0 then break end
@@ -1890,6 +1917,13 @@ local function resetAllToggles()
         S.autoFarmOn = false
         setOff(U.autoFarmBtn, U.autoFarmInd)
         S.autoFarmBagFullNotified = false
+        S.currentFarmCoin = nil
+    end
+    if S.postBagActionOn then
+        S.postBagActionOn = false
+        setOff(U.postBagBtn, U.postBagInd)
+        S.postBagActionDone = false
+        S.safeSpot = nil
     end
     if S.notifyRoundStart then S.notifyRoundStart = false setOff(U.rStartBtn, U.rStartInd) end
     if S.notifyRoundEnd then S.notifyRoundEnd = false setOff(U.rEndBtn, U.rEndInd) end
@@ -1965,7 +1999,32 @@ local function getNearestCoin(myRoot, container)
     return nearest
 end
 
+local function getBagCoinCount()
+    local pg = player:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    local mainGui = pg:FindFirstChild("MainGUI")
+    if not mainGui then return nil end
+    local gameFrame = mainGui:FindFirstChild("Game")
+    if not gameFrame then return nil end
+    local bag = gameFrame:FindFirstChild("CashBag")
+    if not bag then return nil end
+    for _, name in ipairs({"Coins", "CoinCount", "Count", "Amount", "CoinLabel", "CoinText"}) do
+        local c = bag:FindFirstChild(name)
+        if c then
+            if c:IsA("TextLabel") or c:IsA("TextButton") then
+                local n = tonumber(c.Text:match("%d+"))
+                if n then return n end
+            elseif c:IsA("IntValue") or c:IsA("NumberValue") then
+                return c.Value
+            end
+        end
+    end
+    return nil
+end
+
 local function isBagFull()
+    local n = getBagCoinCount()
+    if n then return n >= S.BAG_FULL_THRESHOLD end
     local pg = player:FindFirstChild("PlayerGui")
     if not pg then return false end
     local mainGui = pg:FindFirstChild("MainGUI")
@@ -1977,11 +2036,101 @@ local function isBagFull()
     return not bag:FindFirstChild("Coins") and not bag:FindFirstChild("Elite")
 end
 
+-- Post-bag-full role-based actions
+local function getMapY()
+    local sl = workspace:FindFirstChildOfClass("SpawnLocation")
+    if sl then return sl.Position.Y end
+    return 0
+end
+
+local function goToSafeSpot()
+    local c = player.Character
+    if not c then return end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    if not S.safeSpot then
+        local y = getMapY()
+        if math.random() < 0.5 then
+            S.safeSpot = Vector3.new(hrp.Position.X, y + 500, hrp.Position.Z)
+        else
+            S.safeSpot = Vector3.new(hrp.Position.X, y - 200, hrp.Position.Z)
+        end
+    end
+    hrp.CFrame = CFrame.new(S.safeSpot)
+    hrp.Velocity = Vector3.zero
+    hrp.AssemblyLinearVelocity = Vector3.zero
+end
+
+local function tryGrabDroppedGun()
+    local c = player.Character
+    if not c then return false end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    if getGun() then return true end
+    local gunPart = findGunPart()
+    if not gunPart then return false end
+    local orig = hrp.CFrame
+    for _ = 1, 2 do
+        hrp.CFrame = gunPart.CFrame + Vector3.new(0, 2, 0)
+        task.wait(0.25)
+        if getGun() then return true end
+    end
+    hrp.CFrame = orig
+    return false
+end
+
+local function runPostBagAction()
+    if not S.postBagActionOn then return end
+    if not isBagFull() then
+        S.postBagActionDone = false
+        return
+    end
+    if S.postBagActionDone then return end
+
+    local c = player.Character
+    if not c then return end
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    if isPlayerInSpawn(player) then return end
+
+    if tick() - S.lastBagFullNotified < 1 then return end
+    S.lastBagFullNotified = tick()
+
+    local isMurderer = (MurdererName == player.Name)
+    local isSheriff  = (SheriffName == player.Name)
+
+    if isMurderer then
+        sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — Murderer: killing all", SOUNDS.success)
+        pcall(killAllPlayers)
+        S.postBagActionDone = true
+        return
+    end
+
+    if isSheriff then
+        if MurdererName then
+            sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — Sheriff: killing murderer", SOUNDS.success)
+            pcall(shootMurderer)
+        else
+            sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — no murderer, going safe", SOUNDS.notify)
+            goToSafeSpot()
+        end
+        S.postBagActionDone = true
+        return
+    end
+
+    if tryGrabDroppedGun() then
+        sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — grabbed gun, killing murderer", SOUNDS.success)
+        task.wait(0.3)
+        pcall(shootMurderer)
+    else
+        sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — no gun, teleporting to safe spot", SOUNDS.notify)
+        goToSafeSpot()
+    end
+    S.postBagActionDone = true
+end
+
 local function autoFarmCoins()
     if not S.autoFarmOn then return end
-    local now = tick()
-    if now - S.lastCoinTP < 0.35 then return end
-    S.lastCoinTP = now
 
     local c = player.Character
     if not c then return end
@@ -1993,7 +2142,10 @@ local function autoFarmCoins()
     if isBagFull() then
         if not S.autoFarmBagFullNotified then
             S.autoFarmBagFullNotified = true
-            sendNotification("Auto Farm", "Bag is full — waiting for next round", SOUNDS.notify)
+            sendNotification("Auto Farm", "Bag full (" .. S.BAG_FULL_THRESHOLD .. ") — running role action", SOUNDS.notify)
+        end
+        if S.postBagActionOn then
+            runPostBagAction()
         end
         return
     end
@@ -2002,11 +2154,23 @@ local function autoFarmCoins()
     local container = getCoinContainer()
     if not container then return end
 
-    local coin = getNearestCoin(hrp, container)
-    if coin then
-        hrp.CFrame = CFrame.new(coin.Position + Vector3.new(0, 2, 0))
-        hrp.Velocity = Vector3.zero
+    if S.currentFarmCoin and not S.currentFarmCoin.Parent then
+        S.currentFarmCoin = nil
     end
+
+    local coin = getNearestCoin(hrp, container)
+    if not coin then return end
+
+    if coin == S.currentFarmCoin then
+        if tick() - S.currentCoinTPTime < 1 then
+            return
+        end
+    end
+
+    S.currentFarmCoin = coin
+    S.currentCoinTPTime = tick()
+    hrp.CFrame = CFrame.new(coin.Position + Vector3.new(0, 2, 0))
+    hrp.Velocity = Vector3.zero
 end
 
 -- ============================================================
@@ -2110,18 +2274,33 @@ U.autoFarmBtn.MouseButton1Click:Connect(function()
         end
 
         S.autoFarmBagFullNotified = false
+        S.currentFarmCoin = nil
         sendNotification("MM2 Menu", "Auto Farm ON — collecting coins", SOUNDS.success)
     else
         setOff(U.autoFarmBtn, U.autoFarmInd)
+        S.currentFarmCoin = nil
         sendNotification("MM2 Menu", "Auto Farm OFF")
+    end
+end)
+
+U.postBagBtn, U.postBagInd = createToggle("PostBagAction", "Post-Bag Role Action (40 coins)")
+U.postBagBtn.MouseButton1Click:Connect(function()
+    S.postBagActionOn = not S.postBagActionOn
+    if S.postBagActionOn then
+        setOn(U.postBagBtn, U.postBagInd)
+        S.postBagActionDone = false
+        S.safeSpot = nil
+        sendNotification("MM2 Menu", "Post-Bag Action ON", SOUNDS.notify)
+    else
+        setOff(U.postBagBtn, U.postBagInd)
     end
 end)
 
 createSectionTitle("PRESET INFO")
 local pInfo = Instance.new("TextLabel")
-pInfo.Size = UDim2.new(1, 0, 0, 170)
+pInfo.Size = UDim2.new(1, 0, 0, 190)
 pInfo.BackgroundTransparency = 1
-pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Rainbow Crosshair\n- Gun Drop Alert\n- Round Start / End Notify\n- Player Join/Leave Alerts\n- Kill Sound"
+pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Rainbow Crosshair\n- Gun Drop Alert\n- Round Start / End Notify\n- Player Join/Leave Alerts\n- Kill Sound\n\nPost-Bag Action triggers once bag hits 40 coins:\n- Murderer → kill all\n- Sheriff → shoot murderer\n- Innocent → grab gun & shoot / else safe spot"
 pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
 pInfo.TextSize = 11
 pInfo.Font = Enum.Font.Gotham
@@ -2568,6 +2747,26 @@ local function runAutoPlay()
     end
 end
 
+-- ============================================================
+-- MAIN LOOPS
+-- ============================================================
+RunService.Heartbeat:Connect(function()
+    if S.scriptClosed then return end
+    pcall(getRoles)
+    pcall(updateHL)
+    pcall(updatePlayerDistance)
+    pcall(updateTrails)
+    pcall(updateGunESP)
+    pcall(checkAutoChat)
+    pcall(runAutoPlay)
+    if S.autoFarmOn then
+        pcall(autoFarmCoins)
+    end
+    if S.autoGunTP then
+        pcall(autoTPGunTop)
+    end
+end)
+
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.killerAlarmOn or not MurdererName then
@@ -2706,6 +2905,9 @@ player.CharacterAdded:Connect(function(character)
     S.originalCollision = {}
     S.lastSafePosition = nil
     S.antiVoidCooldown = false
+    S.currentFarmCoin = nil
+    S.postBagActionDone = false
+    S.safeSpot = nil
     if S.noclip then
         task.wait(0.1)
         for _, o in ipairs(character:GetDescendants()) do
@@ -2905,21 +3107,44 @@ kbActions.gunESP = function()
     end
 end
 
-local function toggleEspRole(role)
-    S.espEnabled[role] = not S.espEnabled[role]
-    if espButtons[role] then
-        if S.espEnabled[role] then
-            espButtons[role].Button.BackgroundColor3 = ROLE_COLORS[role]:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
-            espButtons[role].Indicator.BackgroundColor3 = ROLE_COLORS[role]
+kbActions.murdererESP = function()
+    S.espEnabled.Murderer = not S.espEnabled.Murderer
+    local e = espButtons.Murderer
+    if e then
+        if S.espEnabled.Murderer then
+            e.Button.BackgroundColor3 = ROLE_COLORS.Murderer:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+            e.Indicator.BackgroundColor3 = ROLE_COLORS.Murderer
         else
-            setOff(espButtons[role].Button, espButtons[role].Indicator)
+            setOff(e.Button, e.Indicator)
         end
     end
 end
 
-kbActions.murdererESP = function() toggleEspRole("Murderer") end
-kbActions.sheriffESP = function() toggleEspRole("Sheriff") end
-kbActions.innocentESP = function() toggleEspRole("Innocent") end
+kbActions.sheriffESP = function()
+    S.espEnabled.Sheriff = not S.espEnabled.Sheriff
+    local e = espButtons.Sheriff
+    if e then
+        if S.espEnabled.Sheriff then
+            e.Button.BackgroundColor3 = ROLE_COLORS.Sheriff:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+            e.Indicator.BackgroundColor3 = ROLE_COLORS.Sheriff
+        else
+            setOff(e.Button, e.Indicator)
+        end
+    end
+end
+
+kbActions.innocentESP = function()
+    S.espEnabled.Innocent = not S.espEnabled.Innocent
+    local e = espButtons.Innocent
+    if e then
+        if S.espEnabled.Innocent then
+            e.Button.BackgroundColor3 = ROLE_COLORS.Innocent:Lerp(Color3.fromRGB(20, 20, 25), 0.65)
+            e.Indicator.BackgroundColor3 = ROLE_COLORS.Innocent
+        else
+            setOff(e.Button, e.Indicator)
+        end
+    end
+end
 
 kbActions.antiVoid = function()
     S.antiVoidEnabled = not S.antiVoidEnabled
@@ -2930,91 +3155,34 @@ kbActions.turnOffAll = function()
     resetAllToggles()
 end
 
--- ============================================================
--- INPUT HANDLER
--- ============================================================
-local modifierKeys = {
-    [Enum.KeyCode.LeftAlt] = true, [Enum.KeyCode.RightAlt] = true,
-    [Enum.KeyCode.LeftControl] = true, [Enum.KeyCode.RightControl] = true,
-    [Enum.KeyCode.LeftShift] = true,
-}
-local pendingModifier = nil
-
-UserInputService.InputBegan:Connect(function(i, processed)
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
     if S.scriptClosed then return end
     if S.capturingKeybind then
-        if i.KeyCode == Enum.KeyCode.Escape then endCapture() return end
-        if S.capturingAction then S.keybinds[S.capturingAction] = i.KeyCode end
-        endCapture()
-        return
-    end
-    if processed then return end
-    if i.KeyCode == Enum.KeyCode.RightShift then
-        if S.menuVisible then minimizeMenu() else showMenu() end
-        return
-    end
-    if modifierKeys[i.KeyCode] then
-        pendingModifier = i.KeyCode
-        return
-    end
-    if pendingModifier then pendingModifier = nil end
-    if not S.keybindsEnabled then return end
-    for action, key in pairs(S.keybinds) do
-        if i.KeyCode == key then
-            local fn = kbActions[action]
-            if fn then pcall(fn) return end
+        if input.KeyCode == Enum.KeyCode.Escape then
+            endCapture()
+            return
         end
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(i)
-    if S.scriptClosed then return end
-    if i.KeyCode == pendingModifier then
-        if S.keybindsEnabled then
-            for action, key in pairs(S.keybinds) do
-                if i.KeyCode == key then
-                    local fn = kbActions[action]
-                    if fn then pcall(fn) end
-                    break
-                end
+        if input.KeyCode ~= Enum.KeyCode.Unknown then
+            local id = S.capturingAction
+            if id then
+                S.keybinds[id] = input.KeyCode
             end
+            endCapture()
         end
-        pendingModifier = nil
+        return
+    end
+    if not S.keybindsEnabled then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        if not S.menuVisible then showMenu() else minimizeMenu() end
+        return
+    end
+    for id, key in pairs(S.keybinds) do
+        if key == input.KeyCode then
+            local fn = kbActions[id]
+            if fn then pcall(fn) end
+        end
     end
 end)
 
-RunService.Heartbeat:Connect(function()
-    if S.scriptClosed then return end
-    local hue = (tick() * RAINBOW_SPEED) % 1
-    local color = Color3.fromHSV(hue, 1, 1)
-    U.frameStroke.Color = color
-    U.reopenStroke.Color = color
-    FP.stroke.Color = color
-    U.titleGradient.Rotation = (tick() * 60) % 360
-    if S.crosshairOn and U.crosshairH and U.crosshairV and U.crosshairDot then
-        U.crosshairH.BackgroundColor3 = color
-        U.crosshairV.BackgroundColor3 = color
-        U.crosshairDot.BackgroundColor3 = Color3.fromHSV((hue + 0.5) % 1, 1, 1)
-    end
-end)
-
-getRoles()
-updateHL()
-updateGunESP()
-task.spawn(function()
-    while U.gui.Parent do
-        pcall(function()
-            getRoles()
-            updateHL()
-            updateGunESP()
-            updatePlayerDistance()
-            updateTrails()
-            if S.autoKillAll and MurdererName == player.Name then killAllPlayers() end
-            if S.autoGunTP then autoTPGunTop() end
-            if S.autoPlayOn then pcall(runAutoPlay) end
-            if S.autoFarmOn then pcall(autoFarmCoins) end
-            checkAutoChat()
-        end)
-        task.wait(0.25)
-    end
-end)
+sendNotification("MM2 Menu", "Loaded successfully!", SOUNDS.success)
