@@ -29,7 +29,7 @@ local S = {
     killerAlarmOn = false, lastAlarmDist = math.huge,
     crosshairOn = false, crosshairGui = nil,
     keybindsEnabled = true, scriptClosed = false,
-    lastTouchPos = nil,
+    lastTouchPos = nil, mousePos = nil,
     gunDropAlert = false, lastGunDropped = false,
     notifyRoundStart = false, notifyRoundEnd = false,
     playerJoinLeaveNotify = false,
@@ -52,6 +52,7 @@ local S = {
     pendingNotify = false, pendingNotifySince = 0,
     capturingKeybind = false, capturingAction = nil,
     reopenDragDist = 0,
+    hopping = false,
     keybinds = {
         fly = Enum.KeyCode.LeftAlt, noclip = Enum.KeyCode.N, speedhack = Enum.KeyCode.Q,
         infinityJump = Enum.KeyCode.J, autoKillAll = Enum.KeyCode.K, gunESP = Enum.KeyCode.G,
@@ -1695,7 +1696,7 @@ U.camFollowBtn.MouseButton1Click:Connect(function()
     if S.cameraFollowMurderer then setOn(U.camFollowBtn, U.camFollowInd) else setOff(U.camFollowBtn, U.camFollowInd) end
 end)
 
-U.crosshairBtn, U.crosshairInd = createToggle("Crosshair", "Rainbow Crosshair")
+U.crosshairBtn, U.crosshairInd = createToggle("Crosshair", "Rainbow Crosshair (follows mouse)")
 U.crosshairBtn.MouseButton1Click:Connect(function()
     S.crosshairOn = not S.crosshairOn
     if S.crosshairOn then
@@ -1741,21 +1742,42 @@ end)
 
 U.hopBtn = createActionButton("ServerHop", "Server Hop")
 U.hopBtn.MouseButton1Click:Connect(function()
-    sendNotification("MM2 Menu", "Finding new server...")
-    local ok = pcall(function()
-        local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
-        local data = HttpService:JSONDecode(game:HttpGet(url))
-        local servers = data.data
-        if not servers or #servers == 0 then
-            sendNotification("MM2 Menu", "No other servers found", SOUNDS.alert)
-            return
+    if S.hopping then return end
+    S.hopping = true
+    sendNotification("MM2 Menu", "Searching servers...", SOUNDS.notify)
+
+    task.spawn(function()
+        local ok, err = pcall(function()
+            local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100"
+            local response = game:HttpGet(url)
+            local data = HttpService:JSONDecode(response)
+            if not data or not data.data or #data.data == 0 then
+                sendNotification("MM2 Menu", "No other servers available", SOUNDS.alert)
+                return
+            end
+
+            local candidates = {}
+            for _, srv in ipairs(data.data) do
+                if srv.id ~= game.JobId and srv.playing < srv.maxPlayers then
+                    table.insert(candidates, srv)
+                end
+            end
+
+            if #candidates == 0 then
+                sendNotification("MM2 Menu", "All servers are full", SOUNDS.alert)
+                return
+            end
+
+            local pick = candidates[math.random(1, #candidates)]
+            sendNotification("MM2 Menu", "Hopping to " .. pick.playing .. "/" .. pick.maxPlayers .. " server...", SOUNDS.notify)
+            task.wait(0.5)
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
+        end)
+        if not ok then
+            sendNotification("MM2 Menu", "Server hop failed - try again", SOUNDS.alert)
         end
-        local pick = servers[math.random(1, #servers)]
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
+        S.hopping = false
     end)
-    if not ok then
-        sendNotification("MM2 Menu", "Server hop failed", SOUNDS.alert)
-    end
 end)
 
 local function resetAllToggles()
@@ -1829,6 +1851,9 @@ local function resetAllToggles()
     if S.sheriffTrailOn then S.sheriffTrailOn = false setOff(U.sheriffTrailBtn, U.sheriffTrailInd) end
     if S.heroTrailOn then S.heroTrailOn = false setOff(U.heroTrailBtn, U.heroTrailInd) end
     if S.killSoundOn then S.killSoundOn = false setOff(U.killSoundBtn, U.killSoundInd) end
+    if S.notifyRoundStart then S.notifyRoundStart = false setOff(U.rStartBtn, U.rStartInd) end
+    if S.notifyRoundEnd then S.notifyRoundEnd = false setOff(U.rEndBtn, U.rEndInd) end
+    if S.playerJoinLeaveNotify then S.playerJoinLeaveNotify = false setOff(U.plBtn, U.plInd) end
     sendNotification("MM2 Menu", "All features turned off")
 end
 
@@ -1933,6 +1958,22 @@ local function applyPvpPreset()
         if S.crosshairGui then S.crosshairGui.Enabled = true end
     end
     if not S.gunDropAlert then S.gunDropAlert = true setOn(U.gunAlertBtn, U.gunAlertInd) end
+    if not S.notifyRoundStart then S.notifyRoundStart = true setOn(U.rStartBtn, U.rStartInd) end
+    if not S.notifyRoundEnd then S.notifyRoundEnd = true setOn(U.rEndBtn, U.rEndInd) end
+    if not S.playerJoinLeaveNotify then S.playerJoinLeaveNotify = true setOn(U.plBtn, U.plInd) end
+    if not S.killSoundOn then S.killSoundOn = true setOn(U.killSoundBtn, U.killSoundInd) end
+    if not S.autoSendMurdererChat then
+        S.autoSendMurdererChat = true
+        setOn(U.autoChatBtn, U.autoChatInd)
+        S.lastChatSentMurderer = nil
+        S.roundActive = false
+    end
+    if not S.autoSendSheriffChat then
+        S.autoSendSheriffChat = true
+        setOn(U.autoSheriffChatBtn, U.autoSheriffChatInd)
+        S.lastChatSentSheriff = nil
+        S.roundActiveSheriff = false
+    end
     sendNotification("MM2 Menu", "PVP Ready preset applied")
 end
 
@@ -1942,9 +1983,9 @@ U.pvpPresetBtn.MouseButton1Click:Connect(applyPvpPreset)
 
 createSectionTitle("PRESET INFO")
 local pInfo = Instance.new("TextLabel")
-pInfo.Size = UDim2.new(1, 0, 0, 140)
+pInfo.Size = UDim2.new(1, 0, 0, 180)
 pInfo.BackgroundTransparency = 1
-pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Rainbow Crosshair\n- Gun Drop Alert"
+pInfo.Text = "PVP Ready turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Notify Round\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Rainbow Crosshair\n- Gun Drop Alert\n- Round Start / End Notify\n- Player Join/Leave Alerts\n- Kill Sound\n- Auto Send Murderer In Chat\n- Auto Send Sheriff In Chat"
 pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
 pInfo.TextSize = 11
 pInfo.Font = Enum.Font.Gotham
@@ -2077,7 +2118,6 @@ local function getRoles()
 
     roundEvents()
 
-    -- FIX: only fire ONCE per new murderer (not when sheriff appears later)
     if S.autoNotifyRoles and MurdererName then
         if MurdererName ~= lastNotifiedMurderer then
             if not S.pendingNotify then
@@ -2364,7 +2404,6 @@ local function checkAutoChat()
     end
 end
 
--- Killer Alarm — 30 studs, only fires when getting closer
 RunService.Heartbeat:Connect(function()
     if S.scriptClosed then return end
     if not S.killerAlarmOn or not MurdererName then
@@ -2415,7 +2454,11 @@ RunService.RenderStepped:Connect(function()
     end
     if S.crosshairOn then
         local cx, cy
-        if UserInputService.TouchEnabled and S.lastTouchPos then
+        if UserInputService.MouseEnabled and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+            local loc = UserInputService:GetMouseLocation()
+            cx = loc.X
+            cy = loc.Y
+        elseif UserInputService.TouchEnabled and S.lastTouchPos then
             cx = S.lastTouchPos.X
             cy = S.lastTouchPos.Y
         else
