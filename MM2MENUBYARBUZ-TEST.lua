@@ -158,6 +158,9 @@ local noMurdererSince = nil
 local ROUND_END_DEBOUNCE = 2.0
 local ROLE_NOTIFY_DELAY = 2.5
 
+-- FIX: hoisted up so CharacterAdded handler can reference them
+local speedhackBG = nil
+
 local GetPlayerData = nil
 pcall(function() GetPlayerData = ReplicatedStorage:FindFirstChild("GetPlayerData", true) end)
 local warnedNoRemote = false
@@ -242,6 +245,7 @@ U.frame.Position = UDim2.new(0.5, -mn(230), 0.5, -mn(190))
 U.frame.BackgroundColor3 = Color3.fromRGB(22, 23, 28)
 U.frame.BorderSizePixel = 0
 U.frame.Active = true
+U.frame.Visible = true  -- FIX: explicit
 U.frame.Parent = U.canvas
 do
     local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 12) c.Parent = U.frame
@@ -357,6 +361,13 @@ do
     U.reopenStroke.Thickness = 2
     U.reopenStroke.Parent = U.reopen
 end
+
+-- FIX: Reopen via reliable MouseButton1Click (input-ended approach failed on small drags)
+U.reopen.MouseButton1Click:Connect(function()
+    U.frame.Visible = true
+    U.reopen.Visible = false
+    S.menuVisible = true
+end)
 
 U.sidebar = Instance.new("ScrollingFrame")
 U.sidebar.Name = "Sidebar"
@@ -1485,7 +1496,6 @@ stopFly = function()
     setOff(FP.enable, FP.enableInd)
     setOff(U.flyBtn, U.flyInd)
 
-    -- Restore Speedhack if it was on before Fly was enabled (and user hasn't already turned it on).
     if S.speedhackWasOnBeforeFly then
         S.speedhackWasOnBeforeFly = false
         if not S.speedhackEnabled then
@@ -1776,6 +1786,10 @@ stopSpeedhack = function()
         pcall(function() S.speedhackBV:Destroy() end)
         S.speedhackBV = nil
     end
+    if speedhackBG then
+        pcall(function() speedhackBG:Destroy() end)
+        speedhackBG = nil
+    end
     local c = player.Character
     if c then
         local h = c:FindFirstChildOfClass("Humanoid")
@@ -1797,12 +1811,23 @@ startSpeedhack = function()
     if not h or not r then return end
     S.speedhackEnabled = true
     setOn(U.shBtn, U.shInd)
+    -- FIX: lower MaxForce so physics can't spike velocity into "invalid position" kicks
     local bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(100000, 0, 100000)
-    bv.P = 1250
+    bv.Name = "MM2SpeedhackBV"
+    bv.MaxForce = Vector3.new(8000, 0, 8000)
+    bv.P = 1500
     bv.Velocity = Vector3.zero
     bv.Parent = r
     S.speedhackBV = bv
+    -- FIX: BodyGyro forces the character to face the direction they're actually moving
+    local bg = Instance.new("BodyGyro")
+    bg.Name = "MM2SpeedhackBG"
+    bg.MaxTorque = Vector3.new(0, 350000, 0)
+    bg.P = 3500
+    bg.D = 400
+    bg.CFrame = r.CFrame
+    bg.Parent = r
+    speedhackBG = bg
     h.WalkSpeed = 0
 end
 
@@ -1810,14 +1835,42 @@ U.shBtn.MouseButton1Click:Connect(function()
     if S.speedhackEnabled then stopSpeedhack() else startSpeedhack() end
 end)
 
+-- FIX: raycast params reused for speedhack wall check
+local shRayParams = RaycastParams.new()
+shRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
 RunService.Heartbeat:Connect(function()
     if not S.speedhackEnabled or not S.speedhackBV then return end
     local c = player.Character
     if not c then return end
     local h = c:FindFirstChildOfClass("Humanoid")
-    if not h then return end
-    if h.MoveDirection.Magnitude > 0.05 then
-        S.speedhackBV.Velocity = h.MoveDirection * S.speedhackSpeed
+    local r = c:FindFirstChild("HumanoidRootPart")
+    if not h or not r then return end
+
+    local md = h.MoveDirection
+    local flat = Vector3.new(md.X, 0, md.Z)
+    if flat.Magnitude > 0.05 then
+        flat = flat.Unit
+        -- FIX: rotate the body to face where the player is moving
+        if speedhackBG then
+            speedhackBG.CFrame = CFrame.lookAt(r.Position, r.Position + flat)
+        end
+        -- FIX: wall / steep-slope check so physics can't fling the player through geometry
+        shRayParams.FilterDescendantsInstances = {c}
+        local hit = workspace:Raycast(r.Position, flat * 2.2, shRayParams)
+        local blocked = false
+        if hit and hit.Instance and hit.Instance.CanCollide then
+            local normal = hit.Normal
+            local angle = math.deg(math.acos(math.clamp(normal:Dot(Vector3.new(0, 1, 0)), -1, 1)))
+            if angle > 60 then
+                blocked = true
+            end
+        end
+        if blocked then
+            S.speedhackBV.Velocity = Vector3.zero
+        else
+            S.speedhackBV.Velocity = flat * S.speedhackSpeed
+        end
     else
         S.speedhackBV.Velocity = Vector3.zero
     end
@@ -2210,11 +2263,61 @@ local function getGun()
     return g
 end
 
-U.killMurdererBtn = createActionButton("KillMurdererNow", "Kill Murderer Now (WIP - disabled)")
-U.killMurdererBtn.BackgroundColor3 = Color3.fromRGB(45, 40, 40)
-U.killMurdererBtn.TextColor3 = Color3.fromRGB(180, 175, 175)
+-- FIX: Implemented real Kill Murderer (was just a notification before)
+U.killMurdererBtn = createActionButton("KillMurdererNow", "Kill Murderer Now")
+U.killMurdererBtn.BackgroundColor3 = Color3.fromRGB(45, 60, 90)
 U.killMurdererBtn.MouseButton1Click:Connect(function()
-    sendNotification("MM2 Menu", "Kill Murderer Now does not work as expected - currently disabled", SOUNDS.alert)
+    if not MurdererName then
+        sendNotification("MM2 Menu", "Murderer not found", SOUNDS.alert)
+        return
+    end
+    if MurdererName == player.Name then
+        sendNotification("MM2 Menu", "You are the Murderer!", SOUNDS.alert)
+        return
+    end
+    local target = Players:FindFirstChild(MurdererName)
+    if not target or not target.Character then
+        sendNotification("MM2 Menu", "Murderer not available", SOUNDS.alert)
+        return
+    end
+    if isPlayerInSpawn(target) then
+        sendNotification("MM2 Menu", "Murderer is in spawn - can't shoot there", SOUNDS.alert)
+        return
+    end
+    local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
+    local targetHum = target.Character:FindFirstChildOfClass("Humanoid")
+    if not targetRoot or not targetHum or targetHum.Health <= 0 then
+        sendNotification("MM2 Menu", "Murderer not alive", SOUNDS.alert)
+        return
+    end
+    local myChar = player.Character
+    if not myChar then return end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    local gun = getGun()
+    if not gun then
+        sendNotification("MM2 Menu", "No gun equipped (Sheriff only)", SOUNDS.alert)
+        return
+    end
+
+    local to = targetRoot.Position
+    local dir = (to - myRoot.Position)
+    if dir.Magnitude < 0.1 then dir = Vector3.new(0, 0, 1) else dir = dir.Unit end
+    local shootFrom = to - dir * 5
+    myRoot.CFrame = CFrame.lookAt(shootFrom, to)
+
+    task.wait(0.1)
+
+    workspace.CurrentCamera.CFrame = CFrame.lookAt(shootFrom, to)
+    task.wait(0.05)
+
+    for i = 1, 6 do
+        pcall(function() gun:Activate() end)
+        task.wait(0.1)
+        if targetHum.Health <= 0 then break end
+    end
+
+    sendNotification("MM2 Menu", "Attempted to shoot Murderer", SOUNDS.success)
 end)
 
 -- ============================================================
@@ -4169,6 +4272,11 @@ player.CharacterAdded:Connect(function(character)
         pcall(function() S.speedhackBV:Destroy() end)
         S.speedhackBV = nil
     end
+    -- FIX: also clear dangling BodyGyro reference on respawn
+    if speedhackBG then
+        pcall(function() speedhackBG:Destroy() end)
+        speedhackBG = nil
+    end
     if S.noclip then
         task.wait(0.1)
         for _, o in ipairs(character:GetDescendants()) do
@@ -4198,12 +4306,22 @@ player.CharacterAdded:Connect(function(character)
             local hum = c:FindFirstChildOfClass("Humanoid")
             local root = c:FindFirstChild("HumanoidRootPart")
             if not hum or not root then return end
+            -- FIX: rebuild both BV and BG together on respawn
             local bv = Instance.new("BodyVelocity")
-            bv.MaxForce = Vector3.new(100000, 0, 100000)
-            bv.P = 1250
+            bv.Name = "MM2SpeedhackBV"
+            bv.MaxForce = Vector3.new(8000, 0, 8000)
+            bv.P = 1500
             bv.Velocity = Vector3.zero
             bv.Parent = root
             S.speedhackBV = bv
+            local bg = Instance.new("BodyGyro")
+            bg.Name = "MM2SpeedhackBG"
+            bg.MaxTorque = Vector3.new(0, 350000, 0)
+            bg.P = 3500
+            bg.D = 400
+            bg.CFrame = root.CFrame
+            bg.Parent = root
+            speedhackBG = bg
             hum.WalkSpeed = 0
             pcall(setOn, U.shBtn, U.shInd)
         end)
@@ -4211,7 +4329,7 @@ player.CharacterAdded:Connect(function(character)
 end)
 
 -- DRAG / RESIZE
-local dragStart, dragStartPosition, resizeStart, resizeStartSize, reopenDragStart, reopenDragStartPosition
+local dragStart, dragStartPosition, resizeStart, resizeStartSize
 
 U.header.InputBegan:Connect(function(i)
     if S.guiLocked then return end
@@ -4244,31 +4362,11 @@ UserInputService.InputChanged:Connect(function(i)
     end
 end)
 
-U.reopen.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        S.reopenDragging = true
-        reopenDragStart = i.Position
-        reopenDragStartPosition = U.reopen.Position
-        S.reopenDragDist = 0
-    end
-end)
-UserInputService.InputChanged:Connect(function(i)
-    if not S.reopenDragging then return end
-    if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
-        local d = i.Position - reopenDragStart
-        S.reopenDragDist = math.max(S.reopenDragDist, d.Magnitude)
-        U.reopen.Position = UDim2.new(reopenDragStartPosition.X.Scale, reopenDragStartPosition.X.Offset + d.X, reopenDragStartPosition.Y.Scale, reopenDragStartPosition.Y.Offset + d.Y)
-    end
-end)
+-- FIX: InputEnded no longer handles reopen (handled by MouseButton1Click above)
 UserInputService.InputEnded:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
         S.dragging = false
         S.resizing = false
-        if S.reopenDragging and S.reopenDragDist < 5 then
-            U.frame.Visible = true
-            U.reopen.Visible = false
-            S.menuVisible = true
-        end
         S.reopenDragging = false
     end
 end)
@@ -4497,9 +4595,10 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-getRoles()
-updateHL()
-updateGunESP()
+-- FIX: guarded init blocks so a single failure can't leave the menu invisible
+pcall(function() getRoles() end)
+pcall(function() updateHL() end)
+pcall(function() updateGunESP() end)
 
 task.defer(function()
     task.wait(1)
@@ -4508,6 +4607,10 @@ task.defer(function()
         pcall(openWhatsNew)
     end
     pcall(updateHomeUI, true)
+    -- FIX: belt & braces — make sure the menu is showing after setup
+    U.frame.Visible = true
+    U.reopen.Visible = false
+    S.menuVisible = true
 end)
 
 task.spawn(function()
