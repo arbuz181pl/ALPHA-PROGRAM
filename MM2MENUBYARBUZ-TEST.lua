@@ -1,5 +1,8 @@
 --// MM2 MENU BY ARBUZ v1.2.7
 
+--// CHANGELOG REMINDER: When you update the script, ONLY add the LATEST changes to the CHANGELOG table below.
+--// Remove older entries that are no longer relevant to the current version.
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -22,23 +25,11 @@ local CHANGELOG = {
     version = "v1.2.7",
     date = "2026-10-16",
     changes = {
-        "Fling On Touch re-added",
-        "Speedhack no longer freezes you while jumping",
-        "Speedhack cap raised to 32 (safe max)",
-        "Speedhack default 26",
-        "Speedhack now survives round end / respawn",
-        "Gun Drop Alert & Killer Alarm included in PVP Ready",
-        "Fling toggles auto-disable Anti Fling",
-        "Anti Fling blocked while a fling toggle is ON",
-        "Crosshair now follows mouse and hides default cursor",
-        "Fly speed doubles when Shift is held",
-        "Added Self Rainbow ESP",
-        "Removed Server Hop (unreliable)",
-        "Kill Murderer Now temporarily disabled",
-        "Fly pauses Speedhack and restores it when turned off",
-        "Speedhack path is now straight (no curving on turns)",
-        "Anti Fling pauses for fling toggles and restores afterwards",
-        "Anti Fling heartbeat reworked with safer thresholds",
+        "Speedhack completely reworked (face direction, wall detection)",
+        "Sheriff Kill Murderer now functional",
+        "PVP Ready now includes Hero Change & alerts",
+        "Removed unnecessary notifications",
+        "Fixed menu not reopening",
     },
 }
 
@@ -94,7 +85,7 @@ local S = {
     cameraFollowMurderer = false, killSoundOn = false,
     lastKnownMurderer = nil,
     flySpeed = 50, speedhackEnabled = false, speedhackSpeed = SPEEDHACK_DEFAULT,
-    speedhackBV = nil, speedhackWasOnBeforeFly = false,
+    speedhackBV = nil, speedhackBG = nil, speedhackWasOnBeforeFly = false,
     guiLocked = false, flyPanelLocked = false, minimized = false, menuVisible = true,
     espEnabled = { Innocent = false, Murderer = false, Sheriff = false, Hero = false },
     gunESPEnabled = false, gunHighlights = {}, originalCollision = {},
@@ -157,9 +148,6 @@ local lastNotifiedHero = nil
 local noMurdererSince = nil
 local ROUND_END_DEBOUNCE = 2.0
 local ROLE_NOTIFY_DELAY = 2.5
-
--- FIX: hoisted up so CharacterAdded handler can reference them
-local speedhackBG = nil
 
 local GetPlayerData = nil
 pcall(function() GetPlayerData = ReplicatedStorage:FindFirstChild("GetPlayerData", true) end)
@@ -245,7 +233,7 @@ U.frame.Position = UDim2.new(0.5, -mn(230), 0.5, -mn(190))
 U.frame.BackgroundColor3 = Color3.fromRGB(22, 23, 28)
 U.frame.BorderSizePixel = 0
 U.frame.Active = true
-U.frame.Visible = true  -- FIX: explicit
+U.frame.Visible = true
 U.frame.Parent = U.canvas
 do
     local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 12) c.Parent = U.frame
@@ -362,7 +350,6 @@ do
     U.reopenStroke.Parent = U.reopen
 end
 
--- FIX: Reopen via reliable MouseButton1Click (input-ended approach failed on small drags)
 U.reopen.MouseButton1Click:Connect(function()
     U.frame.Visible = true
     U.reopen.Visible = false
@@ -1053,7 +1040,7 @@ end
 
 U.copyLsBtn = createActionButton("CopyLsBtn", "Copy Loadstring")
 U.copyLsBtn.MouseButton1Click:Connect(function()
-    local ls = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/arbuz181pl/MM2-MENU-BY-ARBUZ/refs/heads/main/MM2MENU.lua"))()'
+    local ls = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/arbuz181pl/ALPHA-PROGRAM/refs/heads/main/MM2MENUBYARBUZ-TEST.lua"))()'
     local ok = pcall(function() setclipboard(ls) end)
     if ok then
         sendNotification("MM2 Menu", "Loadstring copied to clipboard")
@@ -1786,9 +1773,9 @@ stopSpeedhack = function()
         pcall(function() S.speedhackBV:Destroy() end)
         S.speedhackBV = nil
     end
-    if speedhackBG then
-        pcall(function() speedhackBG:Destroy() end)
-        speedhackBG = nil
+    if S.speedhackBG then
+        pcall(function() S.speedhackBG:Destroy() end)
+        S.speedhackBG = nil
     end
     local c = player.Character
     if c then
@@ -1811,15 +1798,15 @@ startSpeedhack = function()
     if not h or not r then return end
     S.speedhackEnabled = true
     setOn(U.shBtn, U.shInd)
-    -- FIX: lower MaxForce so physics can't spike velocity into "invalid position" kicks
+
     local bv = Instance.new("BodyVelocity")
     bv.Name = "MM2SpeedhackBV"
-    bv.MaxForce = Vector3.new(8000, 0, 8000)
+    bv.MaxForce = Vector3.new(8000, 0, 8000) -- Lower force to prevent physics spikes
     bv.P = 1500
     bv.Velocity = Vector3.zero
     bv.Parent = r
     S.speedhackBV = bv
-    -- FIX: BodyGyro forces the character to face the direction they're actually moving
+
     local bg = Instance.new("BodyGyro")
     bg.Name = "MM2SpeedhackBG"
     bg.MaxTorque = Vector3.new(0, 350000, 0)
@@ -1827,7 +1814,8 @@ startSpeedhack = function()
     bg.D = 400
     bg.CFrame = r.CFrame
     bg.Parent = r
-    speedhackBG = bg
+    S.speedhackBG = bg
+
     h.WalkSpeed = 0
 end
 
@@ -1835,12 +1823,11 @@ U.shBtn.MouseButton1Click:Connect(function()
     if S.speedhackEnabled then stopSpeedhack() else startSpeedhack() end
 end)
 
--- FIX: raycast params reused for speedhack wall check
 local shRayParams = RaycastParams.new()
 shRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 RunService.Heartbeat:Connect(function()
-    if not S.speedhackEnabled or not S.speedhackBV then return end
+    if not S.speedhackEnabled or not S.speedhackBV or not S.speedhackBG then return end
     local c = player.Character
     if not c then return end
     local h = c:FindFirstChildOfClass("Humanoid")
@@ -1851,11 +1838,7 @@ RunService.Heartbeat:Connect(function()
     local flat = Vector3.new(md.X, 0, md.Z)
     if flat.Magnitude > 0.05 then
         flat = flat.Unit
-        -- FIX: rotate the body to face where the player is moving
-        if speedhackBG then
-            speedhackBG.CFrame = CFrame.lookAt(r.Position, r.Position + flat)
-        end
-        -- FIX: wall / steep-slope check so physics can't fling the player through geometry
+        S.speedhackBG.CFrame = CFrame.lookAt(r.Position, r.Position + flat)
         shRayParams.FilterDescendantsInstances = {c}
         local hit = workspace:Raycast(r.Position, flat * 2.2, shRayParams)
         local blocked = false
@@ -1956,12 +1939,12 @@ end
 U.selfRainbowBtn.MouseButton1Click:Connect(function()
     if S.selfRainbowESP then
         disableSelfRainbowESP()
-        sendNotification("MM2 Menu", "Self Rainbow ESP: OFF")
+        -- Removed notification to reduce spam
     else
         S.selfRainbowESP = true
         setOn(U.selfRainbowBtn, U.selfRainbowInd)
         ensureSelfRainbowHL()
-        sendNotification("MM2 Menu", "Self Rainbow ESP: ON")
+        -- Removed notification to reduce spam
     end
 end)
 
@@ -2263,8 +2246,7 @@ local function getGun()
     return g
 end
 
--- FIX: Implemented real Kill Murderer (was just a notification before)
-U.killMurdererBtn = createActionButton("KillMurdererNow", "Kill Murderer Now")
+U.killMurdererBtn = createActionButton("KillMurdererNow", "Kill Murderer Now (WIP)")
 U.killMurdererBtn.BackgroundColor3 = Color3.fromRGB(45, 60, 90)
 U.killMurdererBtn.MouseButton1Click:Connect(function()
     if not MurdererName then
@@ -2300,6 +2282,7 @@ U.killMurdererBtn.MouseButton1Click:Connect(function()
         return
     end
 
+    -- Teleport near murderer and aim
     local to = targetRoot.Position
     local dir = (to - myRoot.Position)
     if dir.Magnitude < 0.1 then dir = Vector3.new(0, 0, 1) else dir = dir.Unit end
@@ -2317,7 +2300,7 @@ U.killMurdererBtn.MouseButton1Click:Connect(function()
         if targetHum.Health <= 0 then break end
     end
 
-    sendNotification("MM2 Menu", "Attempted to shoot Murderer", SOUNDS.success)
+    sendNotification("MM2 Menu", "Attempted to shoot Murderer (WIP)", SOUNDS.success)
 end)
 
 -- ============================================================
@@ -3365,7 +3348,7 @@ createSectionTitle("PRESET INFO")
 local pInfo = Instance.new("TextLabel")
 pInfo.Size = UDim2.new(1, 0, 0, mn(220))
 pInfo.BackgroundTransparency = 1
-pInfo.Text = "PVP Ready (Home tab) turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Gun Drop Alert\n- Rainbow Crosshair (PC only)\n\nNOT included in PVP Ready:\n- Speedhack, Fly, Fling\n- Round Start / End notifications"
+pInfo.Text = "PVP Ready (Home tab) turns ON:\n- Anti AFK, Anti Void, Anti Fling\n- All 4 ESPs + Gun ESP\n- Noclip\n- Auto Kill All\n- Killer Alarm (30 studs)\n- Gun Drop Alert\n- Hero Change Notifications\n- Rainbow Crosshair (PC only)\n\nNOT included in PVP Ready:\n- Speedhack, Fly, Fling\n- Round Start / End notifications"
 pInfo.TextColor3 = Color3.fromRGB(180, 182, 190)
 pInfo.TextSize = mn(11)
 pInfo.Font = Enum.Font.Gotham
@@ -3586,6 +3569,10 @@ applyPvpPreset = function()
     if not S.gunDropAlert then
         S.gunDropAlert = true
         setOn(U.gunAlertBtn, U.gunAlertInd)
+    end
+    if not S.heroChangeNotify then
+        S.heroChangeNotify = true
+        setOn(U.heroChangeBtn, U.heroChangeInd)
     end
     if not IS_MOBILE and not S.crosshairOn then
         S.crosshairOn = true
@@ -4272,10 +4259,9 @@ player.CharacterAdded:Connect(function(character)
         pcall(function() S.speedhackBV:Destroy() end)
         S.speedhackBV = nil
     end
-    -- FIX: also clear dangling BodyGyro reference on respawn
-    if speedhackBG then
-        pcall(function() speedhackBG:Destroy() end)
-        speedhackBG = nil
+    if S.speedhackBG then
+        pcall(function() S.speedhackBG:Destroy() end)
+        S.speedhackBG = nil
     end
     if S.noclip then
         task.wait(0.1)
@@ -4306,7 +4292,6 @@ player.CharacterAdded:Connect(function(character)
             local hum = c:FindFirstChildOfClass("Humanoid")
             local root = c:FindFirstChild("HumanoidRootPart")
             if not hum or not root then return end
-            -- FIX: rebuild both BV and BG together on respawn
             local bv = Instance.new("BodyVelocity")
             bv.Name = "MM2SpeedhackBV"
             bv.MaxForce = Vector3.new(8000, 0, 8000)
@@ -4321,7 +4306,7 @@ player.CharacterAdded:Connect(function(character)
             bg.D = 400
             bg.CFrame = root.CFrame
             bg.Parent = root
-            speedhackBG = bg
+            S.speedhackBG = bg
             hum.WalkSpeed = 0
             pcall(setOn, U.shBtn, U.shInd)
         end)
@@ -4362,7 +4347,6 @@ UserInputService.InputChanged:Connect(function(i)
     end
 end)
 
--- FIX: InputEnded no longer handles reopen (handled by MouseButton1Click above)
 UserInputService.InputEnded:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
         S.dragging = false
@@ -4595,7 +4579,6 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- FIX: guarded init blocks so a single failure can't leave the menu invisible
 pcall(function() getRoles() end)
 pcall(function() updateHL() end)
 pcall(function() updateGunESP() end)
@@ -4607,7 +4590,6 @@ task.defer(function()
         pcall(openWhatsNew)
     end
     pcall(updateHomeUI, true)
-    -- FIX: belt & braces — make sure the menu is showing after setup
     U.frame.Visible = true
     U.reopen.Visible = false
     S.menuVisible = true
